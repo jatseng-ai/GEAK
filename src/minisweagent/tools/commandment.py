@@ -207,13 +207,6 @@ def _generate_simple(
             '"${GEAK_WORK_DIR}" "${GEAK_REPO_ROOT}" "${GEAK_GPU_DEVICE}" "${GEAK_WORK_DIR}" '
             "> ${GEAK_WORK_DIR}/run.sh && chmod +x ${GEAK_WORK_DIR}/run.sh"
         )
-        # Instruction for the optimizer: incremental rebuild after editing kernel source
-        cpp_setup_lines.append(
-            "# After editing the kernel source, rebuild with: cd ${GEAK_WORK_DIR}/build && cmake --build . 2>&1 | tail -5"
-        )
-        cpp_setup_lines.append(
-            "# (Re-running full SETUP does a clean configure+build; save_and_test runs SETUP automatically.)"
-        )
         setup_section = "\n".join(cpp_setup_lines)
     else:
         setup_section = (

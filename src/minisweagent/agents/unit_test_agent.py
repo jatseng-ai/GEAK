@@ -69,20 +69,14 @@ _LANGUAGE_GUIDANCE: dict[str, str] = {
     ),
     "ck": (
         "This is a Composable Kernel (CK) kernel (C++ compiled with hipcc + CK includes).\n"
-        "- A build step is REQUIRED. Needs CK headers and hipcc.\n"
+        "- A build step is REQUIRED before running tests.\n"
+        "- The build step MUST work standalone in the GEAK_WORK_DIR directory.\n"
+        "- The GEAK_WORK_DIR directory is a copy of kernel folder in the repo root, not the full repo root. The build step must be able to run in this directory.\n"
+        "- If the build system doesn't work standalone in the GEAK_WORK_DIR directory, create a CMakeLists_standalone.txt file in the GEAK_WORK_DIR directory. COMMANDMENT SETUP section will copy this file to CMakeLists.txt with `cp CMakeLists_standalone.txt CMakeLists.txt`\n"
+        "- Do not invoke build in the test harness; COMMANDMENT SETUP section builds the kernel, the harness only runs the binary.\n"
         "- Template parameters (tile sizes, vector widths) are compile-time; test multiple configs.\n"
         "- Use host-side validation against a reference GEMM/convolution; use `hipEventElapsedTime` for benchmarking.\n"
-        "- NEVER use `sys.path.insert(0, '/absolute/path/...')`. Rely on PYTHONPATH set by COMMANDMENT SETUP.\n"
-        "\n"
-        "Standalone build (COMMANDMENT SETUP runs from GEAK_WORK_DIR: build in build/; binary at build/bin/<name>):\n"
-        "- If the worktree has both CMakeLists.txt (CK in-tree stub with add_example_executable) and "
-        "CMakeLists_standalone.txt, SETUP will copy the standalone over CMakeLists.txt and run cmake so the build succeeds.\n"
-        "- Otherwise put a standalone CMake at the worktree root: project(), CMAKE_CXX_COMPILER=hipcc, CK include_directories, "
-        "add_executable(...) for the kernel .cpp. Do NOT rely on CK's add_example_executable (only works inside full CK tree).\n"
-        "- Build dir must be `build/`; binary at `${GEAK_WORK_DIR}/build/bin/<executable_name>`.\n"
-        "- Harness: resolve binary via GEAK_WORK_DIR/build/bin/<executable_name> or build/bin. "
-        "Do not hardcode paths or invoke the build; SETUP builds, harness only runs the binary.\n"
-        "- COMMANDMENT file is created by the pipeline, do not generate it manually.\n"
+        "- NEVER use `sys.path.insert(0, '/absolute/path/...')`. Rely on PYTHONPATH set by COMMANDMENT SETUP section.\n"
     ),
     "asm": (
         "This is a precompiled HSACO assembly kernel.\n"
@@ -215,7 +209,7 @@ def run_unit_test_agent(
     it is appended to the task prompt so the agent starts with pre-scanned results
     instead of exploring from scratch.
     """
-    agent_config, _ = load_agent_config("mini_unit_test_agent")
+    agent_config, _ = load_agent_config("mini_unit_test_agent_ck")
 
     env = LocalEnvironment(**LocalEnvironmentConfig(cwd=str(repo)).__dict__)
     agent = UnitTestAgent(model, env, **agent_config)
