@@ -1,0 +1,10 @@
+{
+  "cache_key": "fused-fp8-quant-9a97146a30e1",
+  "cache_dir": null,
+  "reused_cache": false,
+  "selected_source": "unit_test_agent",
+  "saved_cache_manifest": null,
+  "harness": null,
+  "test_command": "cd /tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf && python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_variance_fused_rms_fp8_3x/fused_rms_fp8/run_1/test_fused_fp8_quant_harness.py --correctness && python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_variance_fused_rms_fp8_3x/fused_rms_fp8/run_1/test_fused_fp8_quant_harness.py --benchmark",
+  "harness_path": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_variance_fused_rms_fp8_3x/fused_rms_fp8/run_1/test_fused_fp8_quant_harness.py"
+}

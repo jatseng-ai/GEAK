@@ -1,0 +1,73 @@
+{
+  "kernel": "fused_qkv_rope",
+  "total_runs": 3,
+  "preprocess_success_rate": 1.0,
+  "benchmark_parsed_count": 2,
+  "benchmark_shape_counts": [
+    25,
+    0,
+    25
+  ],
+  "benchmark_deterministic": false,
+  "benchmark_shapes_deterministic": false,
+  "benchmark_count_consistent": true,
+  "benchmark_run_0_sample": "[(1, 1, 1, 64, 1, False, False, False), (1, 2, 1, 64, 1, True, False, False), (1, 4, 1, 64, 1, True, True, False)]",
+  "benchmark_run_1_sample": "['B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=False nope_first=False reuse_front=False', 'B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=True nope_first=False reuse_front=False', 'B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=True nope_first=True reuse_front=False']",
+  "full_benchmark_parsed_count": 2,
+  "full_benchmark_shape_counts": [
+    1200,
+    0,
+    1200
+  ],
+  "full_benchmark_deterministic": false,
+  "full_benchmark_shapes_deterministic": false,
+  "full_benchmark_count_consistent": true,
+  "full_benchmark_run_0_sample": "[(1, 1, 1, 64, 0, False, False, False), (1, 1, 1, 64, 0, False, False, True), (1, 1, 1, 64, 0, True, False, False)]",
+  "full_benchmark_run_1_sample": "['B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=False nope_first=False reuse_front=False', 'B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=False nope_first=False reuse_front=True', 'B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=True nope_first=False reuse_front=False']",
+  "correctness_parsed_count": 2,
+  "correctness_shape_counts": [
+    25,
+    0,
+    25
+  ],
+  "correctness_deterministic": false,
+  "correctness_shapes_deterministic": false,
+  "correctness_count_consistent": true,
+  "correctness_run_0_sample": "[(1, 1, 1, 64, 1, False, False, False), (1, 2, 1, 64, 1, True, False, False), (1, 4, 1, 64, 1, True, True, False)]",
+  "correctness_run_1_sample": "['B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=False nope_first=False reuse_front=False', 'B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=True nope_first=False reuse_front=False', 'B=1 QH_PER_KH=1 KH=1 D=128 rotate=GPTJ nope=True nope_first=True reuse_front=False']",
+  "profile_parsed_count": 2,
+  "profile_shape_counts": [
+    5,
+    0,
+    5
+  ],
+  "profile_deterministic": false,
+  "profile_shapes_deterministic": false,
+  "profile_count_consistent": true,
+  "profile_run_0_sample": "[(1, 1, 1, 64, 1, False, False, False), (4, 2, 1, 128, 1, False, False, False), (8, 4, 4, 64, 1, False, False, False)]",
+  "profile_run_1_sample": "['B=1 QH_PER_KH=1 KH=1 D=64 rotate=GPTJ nope=False nope_first=False reuse_front=False', 'B=1 QH_PER_KH=1 KH=1 D=64 rotate=GPTJ nope=False nope_first=False reuse_front=True', 'B=1 QH_PER_KH=1 KH=1 D=64 rotate=NEOX nope=True nope_first=False reuse_front=False']",
+  "benchmark_subset_of_full": true,
+  "benchmark_all_leq_25": true,
+  "correctness_pass_rate": 1.0,
+  "profile_pass_rate": 1.0,
+  "benchmark_pass_rate": 1.0,
+  "full-benchmark_pass_rate": 1.0,
+  "benchmark_latencies_ms": [
+    0.0616,
+    0.062,
+    0.0616
+  ],
+  "harness_source_identical": false,
+  "harness_diffs": [
+    {
+      "run_0_vs": 1,
+      "diff_lines": 345,
+      "diff": "--- run_0\n+++ run_1\n@@ -3,4 +3,4 @@\n \n+import os\n import sys\n-import os\n import argparse\n@@ -13,4 +13,4 @@\n         \"GEAK_REPO_ROOT\",\n-        \"/tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf\"\n-    )\n+        \"/tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf\",\n+    ),\n )\n@@ -22,4 +22,6 @@\n \n-# Imports from the repo\n+# Import kernel under test\n from aiter.ops.triton.rope.fused_qkv_split_qk_rope import fused_qkv_split_qk_rope\n+\n+# Import test helpers\n from op_tests.triton_tests.fusions.test_fused_qk_concat import generate_rope_cached_freqs\n@@ -27,3 +29,9 @@\n \n-# \u2500\u2500\u2500 Constants \u2500\u2500\u2500\n+# Import test helper functions from the test file\n+from op_tests.triton_tests.rope.test_fused_qkv_split_qk_rope import (\n+    generate_qkv_inputs,\n+    run_torch,\n+)\n+\n+# Constants\n WARMUP = 50\n@@ -31,35 +39,43 @@\n \n-# \u2500\u2500\u2500 Build ordered full case stream from test parametrize \u2500\u2500\u2500\n-# pytest parametrize order: last decorator varies fastest (outermost loop)\n-# Decorators top-to-bottom: B, QH_PER_KH, KH, D, rotate_style, max_embed_positions,\n+# Build ordered full case stream (pytest order)\n+# Pytest applies decorators bottom-to-top; bottom decorator = outermost loop.\n+# Decorator order (top to bottom in test file):\n+#   B, QH_PER_KH, KH, D, rotate_style, max_embed_positions,\n #   (nope, nope_first), reuse_freqs_front_part, dtype\n-# pytest iterates: dtype (fastest) -> reuse_freqs_front_part -> (nope, nope_first) ->\n-#   max_embed_positions -> rotate_style -> D -> KH -> QH_PER_KH -> B (slowest)\n-\n-B_vals = [1, 4, 8, 16, 32]\n-QH_PER_KH_vals = [1, 2, 4, 8, 16]\n-KH_vals = [1, 4]\n"
+    },
+    {
+      "run_0_vs": 2,
+      "diff_lines": 283,
+      "diff": "--- run_0\n+++ run_2\n@@ -7,2 +7,3 @@\n import math\n+import itertools\n \n@@ -13,4 +14,4 @@\n         \"GEAK_REPO_ROOT\",\n-        \"/tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf\"\n-    )\n+        \"/tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf\",\n+    ),\n )\n@@ -22,3 +23,2 @@\n \n-# Imports from the repo\n from aiter.ops.triton.rope.fused_qkv_split_qk_rope import fused_qkv_split_qk_rope\n@@ -26,4 +26,8 @@\n from op_tests.test_rope import ref_rope_sbhd_fwd, RotateStyle\n-\n-# \u2500\u2500\u2500 Constants \u2500\u2500\u2500\n+from op_tests.triton_tests.rope.test_fused_qkv_split_qk_rope import (\n+    generate_qkv_inputs,\n+    run_torch,\n+)\n+\n+# \u2500\u2500 Fixed constants \u2500\u2500\n WARMUP = 50\n@@ -31,29 +35,27 @@\n \n-# \u2500\u2500\u2500 Build ordered full case stream from test parametrize \u2500\u2500\u2500\n-# pytest parametrize order: last decorator varies fastest (outermost loop)\n+# \u2500\u2500 Build the ordered full case stream \u2500\u2500\n+# pytest parametrize: last decorator = outermost, first decorator = innermost.\n # Decorators top-to-bottom: B, QH_PER_KH, KH, D, rotate_style, max_embed_positions,\n-#   (nope, nope_first), reuse_freqs_front_part, dtype\n-# pytest iterates: dtype (fastest) -> reuse_freqs_front_part -> (nope, nope_first) ->\n-#   max_embed_positions -> rotate_style -> D -> KH -> QH_PER_KH -> B (slowest)\n-\n-B_vals = [1, 4, 8, 16, 32]\n-QH_PER_KH_vals = [1, 2, 4, 8, 16]\n-KH_vals = [1, 4]\n-D_vals = [64, 128]\n-rotate_style_vals = [RotateStyle.GPTJ, RotateStyle.NEOX]\n-max_embed_positions_vals = [131072]\n-nope_nope_first_vals = [(False, False), (True, False), (True, True)]\n-reuse_freqs_front_part_vals = [False, True]\n-dtype_vals = [torch.bfloat16]\n+#   (nope,nope_first), reuse_freqs_front_part, dtype\n+# So outermost = dtype, innermost = B.\n"
+    }
+  ]
+}

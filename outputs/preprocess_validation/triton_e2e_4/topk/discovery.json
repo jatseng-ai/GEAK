@@ -1,0 +1,82 @@
+{
+  "kernel": {
+    "name": "topk",
+    "type": "triton",
+    "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/aiter/ops/triton/topk.py",
+    "functions": []
+  },
+  "workspace": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf",
+  "tests": [
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/triton_tests/test_topk.py",
+      "name": "test_topk.py",
+      "confidence": 6.45,
+      "command": "pytest /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/triton_tests/test_topk.py -v"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_batch_prefill.py",
+      "name": "test_batch_prefill.py",
+      "confidence": 5.85,
+      "command": "pytest /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_batch_prefill.py -v"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_moe_topk_sigmoid.py",
+      "name": "test_moe_topk_sigmoid.py",
+      "confidence": 5.6,
+      "command": "pytest /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_moe_topk_sigmoid.py -v"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_pa_ragged.py",
+      "name": "test_pa_ragged.py",
+      "confidence": 5.25,
+      "command": "pytest /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_pa_ragged.py -v"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_pa_v1.py",
+      "name": "test_pa_v1.py",
+      "confidence": 5.25,
+      "command": "pytest /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_pa_v1.py -v"
+    }
+  ],
+  "benchmarks": [
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/op_benchmarks/triton/bench_topk.py",
+      "name": "bench_topk.py",
+      "confidence": 6.25,
+      "command": "python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/op_benchmarks/triton/bench_topk.py"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_mla_prefill_ps.py",
+      "name": "test_mla_prefill_ps.py",
+      "confidence": 4.95,
+      "command": "python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_mla_prefill_ps.py"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/op_benchmarks/triton/bench_moe_routing_sigmoid_top1_fused.py",
+      "name": "bench_moe_routing_sigmoid_top1_fused.py",
+      "confidence": 4.65,
+      "command": "python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/op_benchmarks/triton/bench_moe_routing_sigmoid_top1_fused.py"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/aiter/test_common.py",
+      "name": "test_common.py",
+      "confidence": 4.55,
+      "command": "python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/aiter/test_common.py"
+    },
+    {
+      "file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_groupnorm.py",
+      "name": "test_groupnorm.py",
+      "confidence": 4.5,
+      "command": "python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/test_groupnorm.py"
+    }
+  ],
+  "total_tests_found": 163,
+  "total_benchmarks_found": 128,
+  "summary": "Found 163 test(s) and 128 benchmark(s) for topk (triton kernel). Recommended test: /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/.geak_resolved/ROCm_aiter/main-e15b75d464bf/op_tests/triton_tests/test_topk.py. Focused test: /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/test_topk_focused.py",
+  "focused_test": {
+    "focused_test_file": "/home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/test_topk_focused.py",
+    "focused_command": "python /home/upandey/GEAK-v3-codebase-reorganization/outputs/preprocess_validation/triton_e2e_4/topk/test_topk_focused.py",
+    "top_test_is_relevant": true,
+    "reason": "The candidate test file imports 'triton_topk' from 'aiter.ops.triton.topk' and directly tests it against torch.topk reference, which matches the target kernel function 'topk'."
+  }
+}

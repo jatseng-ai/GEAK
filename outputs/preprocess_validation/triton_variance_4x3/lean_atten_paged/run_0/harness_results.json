@@ -1,0 +1,34 @@
+[
+  {
+    "mode": "correctness",
+    "success": true,
+    "returncode": 0,
+    "stdout": "Running correctness on 7 configs...\n  Testing BS=1 HQ=32 SEQ_LEN=512 HEAD_DIM=128 ... PASSED\n  Testing BS=1 HQ=32 SEQ_LEN=1024 HEAD_DIM=128 ... PASSED\n  Testing BS=1 HQ=32 SEQ_LEN=2048 HEAD_DIM=128 ... PASSED\n  Testing BS=1 HQ=32 SEQ_LEN=4096 HEAD_DIM=128 ... PASSED\n  Testing BS=1 HQ=32 SEQ_LEN=8192 HEAD_DIM=128 ... PASSED\n  Testing BS=1 HQ=32 SEQ_LEN=16384 HEAD_DIM=128 ... PASSED\n  Testing BS=1 HQ=32 SEQ_LEN=32768 HEAD_DIM=128 ... PASSED\n\nGEAK_SHAPES_USED=[(1, 32, 512, 128), (1, 32, 1024, 128), (1, 32, 2048, 128), (1, 32, 4096, 128), (1, 32, 8192, 128), (1, 32, 16384, 128), (1, 32, 32768, 128)]\nALL CORRECTNESS CHECKS PASSED\n",
+    "stderr": "[aiter] import [module_aiter_enum] under /tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf/aiter/jit/module_aiter_enum.so\n",
+    "duration_s": 3.83
+  },
+  {
+    "mode": "profile",
+    "success": true,
+    "returncode": 0,
+    "stdout": "Profiled: BS=1 HQ=32 SEQ_LEN=512 HEAD_DIM=128\nProfiled: BS=1 HQ=32 SEQ_LEN=2048 HEAD_DIM=128\nProfiled: BS=1 HQ=32 SEQ_LEN=4096 HEAD_DIM=128\nProfiled: BS=1 HQ=32 SEQ_LEN=8192 HEAD_DIM=128\nProfiled: BS=1 HQ=32 SEQ_LEN=32768 HEAD_DIM=128\n\nGEAK_SHAPES_USED=[(1, 32, 512, 128), (1, 32, 2048, 128), (1, 32, 4096, 128), (1, 32, 8192, 128), (1, 32, 32768, 128)]\n",
+    "stderr": "[aiter] import [module_aiter_enum] under /tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf/aiter/jit/module_aiter_enum.so\n",
+    "duration_s": 3.34
+  },
+  {
+    "mode": "benchmark",
+    "success": true,
+    "returncode": 0,
+    "stdout": "BS=1 HQ=32 SEQ_LEN=512 HEAD_DIM=128  0.1172ms\nBS=1 HQ=32 SEQ_LEN=1024 HEAD_DIM=128  0.1050ms\nBS=1 HQ=32 SEQ_LEN=2048 HEAD_DIM=128  0.1109ms\nBS=1 HQ=32 SEQ_LEN=4096 HEAD_DIM=128  0.1277ms\nBS=1 HQ=32 SEQ_LEN=8192 HEAD_DIM=128  0.1627ms\nBS=1 HQ=32 SEQ_LEN=16384 HEAD_DIM=128  0.2342ms\nBS=1 HQ=32 SEQ_LEN=32768 HEAD_DIM=128  0.3706ms\n\nGEAK_SHAPES_USED=[(1, 32, 512, 128), (1, 32, 1024, 128), (1, 32, 2048, 128), (1, 32, 4096, 128), (1, 32, 8192, 128), (1, 32, 16384, 128), (1, 32, 32768, 128)]\nGEAK_RESULT_LATENCY_MS=0.1580\n",
+    "stderr": "[aiter] import [module_aiter_enum] under /tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf/aiter/jit/module_aiter_enum.so\n",
+    "duration_s": 3.39
+  },
+  {
+    "mode": "full-benchmark",
+    "success": true,
+    "returncode": 0,
+    "stdout": "BS=1 HQ=32 SEQ_LEN=512 HEAD_DIM=128  0.1175ms\nBS=1 HQ=32 SEQ_LEN=1024 HEAD_DIM=128  0.1026ms\nBS=1 HQ=32 SEQ_LEN=2048 HEAD_DIM=128  0.1075ms\nBS=1 HQ=32 SEQ_LEN=4096 HEAD_DIM=128  0.1248ms\nBS=1 HQ=32 SEQ_LEN=8192 HEAD_DIM=128  0.1640ms\nBS=1 HQ=32 SEQ_LEN=16384 HEAD_DIM=128  0.2260ms\nBS=1 HQ=32 SEQ_LEN=32768 HEAD_DIM=128  0.3645ms\n\nGEAK_SHAPES_USED=[(1, 32, 512, 128), (1, 32, 1024, 128), (1, 32, 2048, 128), (1, 32, 4096, 128), (1, 32, 8192, 128), (1, 32, 16384, 128), (1, 32, 32768, 128)]\nGEAK_RESULT_LATENCY_MS=0.1554\n",
+    "stderr": "[aiter] import [module_aiter_enum] under /tmp/preproc_debug_topk2/.geak_resolved/ROCm_aiter/main-e15b75d464bf/aiter/jit/module_aiter_enum.so\n",
+    "duration_s": 3.36
+  }
+]
