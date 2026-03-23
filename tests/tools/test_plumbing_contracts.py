@@ -19,7 +19,7 @@ import tempfile
 
 import pytest
 
-from minisweagent.baseline_metrics import (
+from minisweagent.run.preprocess.baseline import (
     build_baseline_metrics,
     list_kernels,
 )

@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from minisweagent.run.task_generator import (
+from minisweagent.agents.heterogeneous.task_generator import (
     _SYSTEM_PROMPT,
     _build_workload_guidance,
     _parse_llm_response,
     generate_tasks,
 )
-from minisweagent.tools.discovery_types import DiscoveryResult, KernelInfo
+from minisweagent.run.preprocess.discovery_types import DiscoveryResult, KernelInfo
 
 
 class FakeAgentClass:
@@ -57,7 +57,7 @@ VALID_TASK_JSON = """[
 ]"""
 
 
-@patch("minisweagent.run.task_generator._run_task_agent", return_value=VALID_TASK_JSON)
+@patch("minisweagent.agents.heterogeneous.task_generator._run_task_agent", return_value=VALID_TASK_JSON)
 def test_agent_submits_valid_json(mock_agent):
     dr = _make_discovery("triton")
     model = MagicMock()
@@ -74,38 +74,11 @@ def test_agent_submits_valid_json(mock_agent):
     mock_agent.assert_called_once()
 
 
-@patch("minisweagent.run.task_generator._run_task_agent", return_value=VALID_TASK_JSON)
-def test_openevolve_dispatch(mock_agent):
-    """openevolve agent_type -> OpenEvolveWorker class + config."""
-    from minisweagent.agents.openevolve_worker import OpenEvolveWorker
-
-    dr = _make_discovery("triton")
-    model = MagicMock()
-    tasks = generate_tasks(
-        discovery_result=dr,
-        base_task_context="ctx",
-        agent_class=FakeAgentClass,
-        model=model,
-        commandment_path=Path("/ws/COMMANDMENT.md"),
-        baseline_metrics_path=Path("/ws/baseline.json"),
-    )
-    oe_tasks = [t for t in tasks if t.agent_class is OpenEvolveWorker]
-    assert len(oe_tasks) == 1
-    assert oe_tasks[0].label == "evolve-inner"
-    assert oe_tasks[0].config["kernel_path"] == "/workspace/kernel.py"
-    assert oe_tasks[0].config["commandment_path"] == "/ws/COMMANDMENT.md"
-    assert oe_tasks[0].config["baseline_metrics_path"] == "/ws/baseline.json"
-
-    strategy_tasks = [t for t in tasks if t.agent_class is FakeAgentClass]
-    assert len(strategy_tasks) == 1
-    assert strategy_tasks[0].label == "mem-opt"
-
-
 # ---- Agent fails -> RuntimeError propagates ----
 
 
 @patch(
-    "minisweagent.run.task_generator._run_task_agent",
+    "minisweagent.agents.heterogeneous.task_generator._run_task_agent",
     side_effect=RuntimeError("agent did not submit"),
 )
 def test_agent_failure_propagates(mock_agent):
@@ -138,29 +111,14 @@ def test_parse_valid_json():
     assert tasks[0].label == "evolve-inner"
 
 
-def test_parse_openevolve_uses_correct_class():
-    from minisweagent.agents.openevolve_worker import OpenEvolveWorker
+def test_parse_strategy_agent_uses_mapped_class():
+    from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
 
-    tasks = _parse_llm_response(
-        VALID_TASK_JSON,
-        FakeAgentClass,
-        kernel_path="/ws/k.py",
-        commandment_path="/ws/CMD.md",
-        baseline_metrics_path="/ws/bm.json",
-    )
-    oe = [t for t in tasks if t.agent_class is OpenEvolveWorker]
-    assert len(oe) == 1
-    assert oe[0].config["kernel_path"] == "/ws/k.py"
-    assert oe[0].config["commandment_path"] == "/ws/CMD.md"
-    assert oe[0].config["baseline_metrics_path"] == "/ws/bm.json"
-
-
-def test_parse_strategy_agent_uses_default_class():
     tasks = _parse_llm_response(
         '[{"label": "opt", "priority": 5, "agent_type": "strategy_agent", "task_prompt": "Do it"}]',
         FakeAgentClass,
     )
-    assert tasks[0].agent_class is FakeAgentClass
+    assert tasks[0].agent_class is StrategyInteractiveAgent
 
 
 def test_parse_rejects_non_array():

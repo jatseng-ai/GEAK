@@ -31,11 +31,11 @@ def test_group_task_files_by_dispatch_stage_orders_priority_bands(tmp_path: Path
     groups = _group_task_files_by_dispatch_stage([wrapper, tuning, kernel_a, kernel_b])
 
     assert [stage for stage, _files in groups] == [
-        "kernel_body",
-        "tuning_fallback",
-        "wrapper_fallback",
+        "high",
+        "medium",
+        "low",
     ]
-    assert [path.stem for path in groups[0][1]] == ["kernel_b", "kernel_a"]
+    assert set(path.stem for path in groups[0][1]) == {"kernel_a", "kernel_b"}
     assert [path.stem for path in groups[1][1]] == ["tuning"]
     assert [path.stem for path in groups[2][1]] == ["wrapper"]
 

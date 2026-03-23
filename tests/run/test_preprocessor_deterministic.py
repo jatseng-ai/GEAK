@@ -6,7 +6,7 @@ import types
 from pathlib import Path
 from unittest.mock import patch
 
-from minisweagent.run.preprocessor import run_preprocessor
+from minisweagent.run.preprocess.preprocessor import run_preprocessor
 
 
 def _write_demo_harness(path: Path) -> None:
@@ -100,25 +100,25 @@ def test_run_preprocessor_uses_explicit_deterministic_harness(tmp_path, monkeypa
         return None
 
     with (
-        patch("minisweagent.run.preprocessor._ensure_mcp_importable", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor._ensure_mcp_importable", return_value=None),
         patch(
-            "minisweagent.tools.resolve_kernel_url_impl.resolve_kernel_url",
+            "minisweagent.run.preprocess.resolve_kernel_url.resolve_kernel_url",
             return_value={
                 "error": None,
                 "local_repo_path": str(repo_root),
                 "local_file_path": str(kernel_path),
             },
         ),
-        patch("minisweagent.tools.resolve_kernel_url_impl.parse_github_source_url", side_effect=_fake_parse),
+        patch("minisweagent.run.preprocess.resolve_kernel_url.parse_github_source_url", side_effect=_fake_parse),
         patch(
-            "minisweagent.run.codebase_context.generate_codebase_context",
+            "minisweagent.run.preprocess.codebase_context.generate_codebase_context",
             side_effect=lambda repo_root, kernel_path, output_dir: output_dir / "CODEBASE_CONTEXT.md",
         ),
-        patch("minisweagent.run.preprocessor.get_testcase_cache_dir", side_effect=AssertionError("cache should be skipped")),
-        patch("minisweagent.run.preprocessor.materialize_cached_harness", side_effect=AssertionError("cache materialization should be skipped")),
-        patch("minisweagent.run.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
-        patch("minisweagent.run.preprocessor.run_baseline_profile", return_value=None),
-        patch("minisweagent.tools.commandment.generate_commandment", return_value="COMMANDMENT"),
+        patch("minisweagent.run.preprocess.preprocessor.get_testcase_cache_dir", side_effect=AssertionError("cache should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.materialize_cached_harness", side_effect=AssertionError("cache materialization should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.run_baseline_profile", return_value=None),
+        patch("minisweagent.run.preprocess.commandment.generate_commandment", return_value="COMMANDMENT"),
     ):
         (output_dir / "CODEBASE_CONTEXT.md").parent.mkdir(parents=True, exist_ok=True)
         (output_dir / "CODEBASE_CONTEXT.md").write_text("context\n")
@@ -167,9 +167,9 @@ def test_run_preprocessor_accepts_local_deterministic_harness_path(tmp_path, mon
     materialized_harness.write_text("# materialized harness\n")
 
     with (
-        patch("minisweagent.run.preprocessor._ensure_mcp_importable", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor._ensure_mcp_importable", return_value=None),
         patch(
-            "minisweagent.tools.resolve_kernel_url_impl.resolve_kernel_url",
+            "minisweagent.run.preprocess.resolve_kernel_url.resolve_kernel_url",
             return_value={
                 "error": None,
                 "local_repo_path": str(repo_root),
@@ -177,14 +177,14 @@ def test_run_preprocessor_accepts_local_deterministic_harness_path(tmp_path, mon
             },
         ),
         patch(
-            "minisweagent.run.codebase_context.generate_codebase_context",
+            "minisweagent.run.preprocess.codebase_context.generate_codebase_context",
             side_effect=lambda repo_root, kernel_path, output_dir: output_dir / "CODEBASE_CONTEXT.md",
         ),
-        patch("minisweagent.run.preprocessor.get_testcase_cache_dir", side_effect=AssertionError("cache should be skipped")),
-        patch("minisweagent.run.preprocessor.materialize_cached_harness", side_effect=AssertionError("cache materialization should be skipped")),
-        patch("minisweagent.run.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
-        patch("minisweagent.run.preprocessor.run_baseline_profile", return_value=None),
-        patch("minisweagent.tools.commandment.generate_commandment", return_value="COMMANDMENT"),
+        patch("minisweagent.run.preprocess.preprocessor.get_testcase_cache_dir", side_effect=AssertionError("cache should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.materialize_cached_harness", side_effect=AssertionError("cache materialization should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.run_baseline_profile", return_value=None),
+        patch("minisweagent.run.preprocess.commandment.generate_commandment", return_value="COMMANDMENT"),
     ):
         (output_dir / "CODEBASE_CONTEXT.md").parent.mkdir(parents=True, exist_ok=True)
         (output_dir / "CODEBASE_CONTEXT.md").write_text("context\n")
@@ -244,9 +244,9 @@ def test_run_preprocessor_prefers_focused_harness_when_top_test_is_irrelevant(tm
     materialized_harness.write_text("# materialized harness\n")
 
     with (
-        patch("minisweagent.run.preprocessor._ensure_mcp_importable", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor._ensure_mcp_importable", return_value=None),
         patch(
-            "minisweagent.tools.resolve_kernel_url_impl.resolve_kernel_url",
+            "minisweagent.run.preprocess.resolve_kernel_url.resolve_kernel_url",
             return_value={
                 "error": None,
                 "local_repo_path": str(repo_root),
@@ -254,26 +254,26 @@ def test_run_preprocessor_prefers_focused_harness_when_top_test_is_irrelevant(tm
             },
         ),
         patch(
-            "minisweagent.run.codebase_context.generate_codebase_context",
+            "minisweagent.run.preprocess.codebase_context.generate_codebase_context",
             side_effect=lambda repo_root, kernel_path, output_dir: output_dir / "CODEBASE_CONTEXT.md",
         ),
-        patch("minisweagent.run.preprocessor.get_testcase_cache_dir", return_value=None),
-        patch("minisweagent.run.preprocessor.validate_harness", return_value=(True, [])),
+        patch("minisweagent.run.preprocess.preprocessor.get_testcase_cache_dir", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor.validate_harness", return_value=(True, [])),
         patch(
-            "minisweagent.run.preprocessor.execute_harness_validation",
+            "minisweagent.run.preprocess.preprocessor.execute_harness_validation",
             side_effect=lambda harness_path, **kwargs: (True, [], _demo_harness_results()),
         ),
         patch(
-            "minisweagent.run.preprocessor._materialize_preprocessor_harness",
+            "minisweagent.run.preprocess.preprocessor._materialize_preprocessor_harness",
             side_effect=lambda **kwargs: (
                 kwargs["test_command"],
                 kwargs["harness_path"],
                 kwargs["harness_results"],
             ),
         ),
-        patch("minisweagent.run.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
-        patch("minisweagent.run.preprocessor.run_baseline_profile", return_value=None),
-        patch("minisweagent.tools.commandment.generate_commandment", return_value="COMMANDMENT"),
+        patch("minisweagent.run.preprocess.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.run_baseline_profile", return_value=None),
+        patch("minisweagent.run.preprocess.commandment.generate_commandment", return_value="COMMANDMENT"),
     ):
         (output_dir / "CODEBASE_CONTEXT.md").write_text("context\n")
         ctx = run_preprocessor(
@@ -331,9 +331,9 @@ def test_run_preprocessor_skips_generic_cached_harness_when_top_test_is_irreleva
     materialized_harness.write_text("# materialized harness\n")
 
     with (
-        patch("minisweagent.run.preprocessor._ensure_mcp_importable", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor._ensure_mcp_importable", return_value=None),
         patch(
-            "minisweagent.tools.resolve_kernel_url_impl.resolve_kernel_url",
+            "minisweagent.run.preprocess.resolve_kernel_url.resolve_kernel_url",
             return_value={
                 "error": None,
                 "local_repo_path": str(repo_root),
@@ -341,35 +341,35 @@ def test_run_preprocessor_skips_generic_cached_harness_when_top_test_is_irreleva
             },
         ),
         patch(
-            "minisweagent.run.codebase_context.generate_codebase_context",
+            "minisweagent.run.preprocess.codebase_context.generate_codebase_context",
             side_effect=lambda repo_root, kernel_path, output_dir: output_dir / "CODEBASE_CONTEXT.md",
         ),
-        patch("minisweagent.run.preprocessor.get_testcase_cache_dir", return_value=cache_dir),
+        patch("minisweagent.run.preprocess.preprocessor.get_testcase_cache_dir", return_value=cache_dir),
         patch(
-            "minisweagent.run.preprocessor.materialize_cached_harness",
+            "minisweagent.run.preprocess.preprocessor.materialize_cached_harness",
             return_value=(
                 f"python {cached_harness}",
                 str(cached_harness.resolve()),
                 {"source": "discovery_test"},
             ),
         ),
-        patch("minisweagent.run.preprocessor.validate_harness", return_value=(True, [])),
+        patch("minisweagent.run.preprocess.preprocessor.validate_harness", return_value=(True, [])),
         patch(
-            "minisweagent.run.preprocessor.execute_harness_validation",
+            "minisweagent.run.preprocess.preprocessor.execute_harness_validation",
             side_effect=lambda harness_path, **kwargs: (True, [], _demo_harness_results()),
         ),
         patch(
-            "minisweagent.run.preprocessor._materialize_preprocessor_harness",
+            "minisweagent.run.preprocess.preprocessor._materialize_preprocessor_harness",
             side_effect=lambda **kwargs: (
                 kwargs["test_command"],
                 kwargs["harness_path"],
                 kwargs["harness_results"],
             ),
         ),
-        patch("minisweagent.run.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
-        patch("minisweagent.run.preprocessor.run_baseline_profile", return_value=None),
-        patch("minisweagent.run.preprocessor.save_cached_harness", return_value=None),
-        patch("minisweagent.tools.commandment.generate_commandment", return_value="COMMANDMENT"),
+        patch("minisweagent.run.preprocess.preprocessor.create_validated_harness", side_effect=AssertionError("UnitTestAgent should be skipped")),
+        patch("minisweagent.run.preprocess.preprocessor.run_baseline_profile", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor.save_cached_harness", return_value=None),
+        patch("minisweagent.run.preprocess.commandment.generate_commandment", return_value="COMMANDMENT"),
     ):
         (output_dir / "CODEBASE_CONTEXT.md").write_text("context\n")
         ctx = run_preprocessor(
@@ -429,9 +429,9 @@ def test_run_preprocessor_uses_unit_test_agent_when_irrelevant_top_test_has_no_v
     monkeypatch.setitem(sys.modules, "automated_test_discovery.server", fake_server)
 
     with (
-        patch("minisweagent.run.preprocessor._ensure_mcp_importable", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor._ensure_mcp_importable", return_value=None),
         patch(
-            "minisweagent.tools.resolve_kernel_url_impl.resolve_kernel_url",
+            "minisweagent.run.preprocess.resolve_kernel_url.resolve_kernel_url",
             return_value={
                 "error": None,
                 "local_repo_path": str(repo_root),
@@ -439,21 +439,21 @@ def test_run_preprocessor_uses_unit_test_agent_when_irrelevant_top_test_has_no_v
             },
         ),
         patch(
-            "minisweagent.run.codebase_context.generate_codebase_context",
+            "minisweagent.run.preprocess.codebase_context.generate_codebase_context",
             side_effect=lambda repo_root, kernel_path, output_dir: output_dir / "CODEBASE_CONTEXT.md",
         ),
-        patch("minisweagent.run.preprocessor.get_testcase_cache_dir", return_value=None),
-        patch("minisweagent.run.preprocessor.validate_harness", side_effect=lambda harness_path: (harness_path != str(focused_harness.resolve()), [])),
+        patch("minisweagent.run.preprocess.preprocessor.get_testcase_cache_dir", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor.validate_harness", side_effect=lambda harness_path: (harness_path != str(focused_harness.resolve()), [])),
         patch(
-            "minisweagent.run.preprocessor.execute_harness_validation",
+            "minisweagent.run.preprocess.preprocessor.execute_harness_validation",
             side_effect=lambda harness_path, **kwargs: (True, [], _demo_harness_results()),
         ),
         patch(
-            "minisweagent.run.preprocessor.create_validated_harness",
+            "minisweagent.run.preprocess.preprocessor.create_validated_harness",
             return_value=(f"python {generated_harness}", _demo_harness_results()),
         ) as create_harness,
-        patch("minisweagent.run.preprocessor.run_baseline_profile", return_value=None),
-        patch("minisweagent.tools.commandment.generate_commandment", return_value="COMMANDMENT"),
+        patch("minisweagent.run.preprocess.preprocessor.run_baseline_profile", return_value=None),
+        patch("minisweagent.run.preprocess.commandment.generate_commandment", return_value="COMMANDMENT"),
     ):
         (output_dir / "CODEBASE_CONTEXT.md").write_text("context\n")
         ctx = run_preprocessor(
@@ -501,9 +501,9 @@ def test_run_preprocessor_materializes_discovery_harness_into_output_dir(tmp_pat
     monkeypatch.setitem(sys.modules, "automated_test_discovery.server", fake_server)
 
     with (
-        patch("minisweagent.run.preprocessor._ensure_mcp_importable", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor._ensure_mcp_importable", return_value=None),
         patch(
-            "minisweagent.tools.resolve_kernel_url_impl.resolve_kernel_url",
+            "minisweagent.run.preprocess.resolve_kernel_url.resolve_kernel_url",
             return_value={
                 "error": None,
                 "local_repo_path": str(repo_root),
@@ -511,24 +511,24 @@ def test_run_preprocessor_materializes_discovery_harness_into_output_dir(tmp_pat
             },
         ),
         patch(
-            "minisweagent.run.codebase_context.generate_codebase_context",
+            "minisweagent.run.preprocess.codebase_context.generate_codebase_context",
             side_effect=lambda repo_root, kernel_path, output_dir: output_dir / "CODEBASE_CONTEXT.md",
         ),
-        patch("minisweagent.run.preprocessor.get_testcase_cache_dir", return_value=None),
+        patch("minisweagent.run.preprocess.preprocessor.get_testcase_cache_dir", return_value=None),
         patch(
-            "minisweagent.run.preprocessor.execute_harness_validation",
+            "minisweagent.run.preprocess.preprocessor.execute_harness_validation",
             side_effect=lambda harness_path, **kwargs: (True, [], _demo_harness_results()),
         ),
         patch(
-            "minisweagent.run.preprocessor._materialize_preprocessor_harness",
+            "minisweagent.run.preprocess.preprocessor._materialize_preprocessor_harness",
             return_value=(
                 f"python {materialized_harness}",
                 str(materialized_harness.resolve()),
                 _demo_harness_results(),
             ),
         ),
-        patch("minisweagent.run.preprocessor.run_baseline_profile", return_value=None),
-        patch("minisweagent.tools.commandment.generate_commandment", return_value="COMMANDMENT"),
+        patch("minisweagent.run.preprocess.preprocessor.run_baseline_profile", return_value=None),
+        patch("minisweagent.run.preprocess.commandment.generate_commandment", return_value="COMMANDMENT"),
     ):
         (output_dir / "CODEBASE_CONTEXT.md").write_text("context\n")
         ctx = run_preprocessor(

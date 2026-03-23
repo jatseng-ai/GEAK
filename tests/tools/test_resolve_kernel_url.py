@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from minisweagent.tools.resolve_kernel_url_impl import (
+from minisweagent.run.preprocess.resolve_kernel_url import (
     _parse_fragment,
     _resolved_clone_dir,
     _strip_fragment,
@@ -50,7 +50,7 @@ class TestParseGithubSourceUrl:
                 "def refs/heads/sdubagun/fix-kernel-harness-parity",
             ]
         )
-        with patch("minisweagent.tools.resolve_kernel_url_impl.subprocess.run") as mock_run:
+        with patch("minisweagent.run.preprocess.resolve_kernel_url.subprocess.run") as mock_run:
             mock_run.return_value = type("R", (), {"returncode": 0, "stderr": "", "stdout": ls_remote})()
             got = parse_github_source_url(url)
 
@@ -158,8 +158,8 @@ class TestResolveKernelUrl:
             full_path.write_text("# mock kernel")
 
             with (
-                patch("minisweagent.tools.resolve_kernel_url_impl.tempfile.mkdtemp", return_value=tmpdir),
-                patch("minisweagent.tools.resolve_kernel_url_impl.subprocess.run") as mock_run,
+                patch("minisweagent.run.preprocess.resolve_kernel_url.tempfile.mkdtemp", return_value=tmpdir),
+                patch("minisweagent.run.preprocess.resolve_kernel_url.subprocess.run") as mock_run,
             ):
                 mock_run.return_value = type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
 
@@ -175,8 +175,8 @@ class TestResolveKernelUrl:
         url = "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/moe/moe_op_gelu.py"
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
-                patch("minisweagent.tools.resolve_kernel_url_impl.tempfile.mkdtemp", return_value=tmpdir),
-                patch("minisweagent.tools.resolve_kernel_url_impl.subprocess.run") as mock_run,
+                patch("minisweagent.run.preprocess.resolve_kernel_url.tempfile.mkdtemp", return_value=tmpdir),
+                patch("minisweagent.run.preprocess.resolve_kernel_url.subprocess.run") as mock_run,
             ):
                 mock_run.return_value = type(
                     "R",
@@ -199,8 +199,8 @@ class TestResolveKernelUrl:
         url = "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/moe/moe_op_gelu.py"
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
-                patch("minisweagent.tools.resolve_kernel_url_impl.tempfile.mkdtemp", return_value=tmpdir),
-                patch("minisweagent.tools.resolve_kernel_url_impl.subprocess.run") as mock_run,
+                patch("minisweagent.run.preprocess.resolve_kernel_url.tempfile.mkdtemp", return_value=tmpdir),
+                patch("minisweagent.run.preprocess.resolve_kernel_url.subprocess.run") as mock_run,
             ):
                 mock_run.return_value = type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
 
@@ -246,7 +246,7 @@ class TestResolveKernelUrl:
                 return type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
             raise AssertionError(f"Unexpected command: {cmd}")
 
-        with patch("minisweagent.tools.resolve_kernel_url_impl.subprocess.run", side_effect=_fake_run):
+        with patch("minisweagent.run.preprocess.resolve_kernel_url.subprocess.run", side_effect=_fake_run):
             out = resolve_kernel_url(url, clone_into=tmp_path)
 
         assert out["error"] is None

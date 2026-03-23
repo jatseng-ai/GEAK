@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from minisweagent.run.testcase_cache import (
+from minisweagent.run.preprocess.testcase_cache import (
     build_testcase_cache_key,
     get_testcase_cache_entry,
     materialize_cached_harness,

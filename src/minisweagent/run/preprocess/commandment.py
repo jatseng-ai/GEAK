@@ -45,7 +45,7 @@ import importlib.util as _ilu
 import re
 from pathlib import Path
 
-_vc_path = Path(__file__).with_name("validate_commandment.py")
+_vc_path = Path(__file__).resolve().parent.parent.parent / "tools" / "validate_commandment.py"
 _vc_spec = _ilu.spec_from_file_location("validate_commandment", _vc_path)
 _vc_mod = _ilu.module_from_spec(_vc_spec)
 _vc_spec.loader.exec_module(_vc_mod)

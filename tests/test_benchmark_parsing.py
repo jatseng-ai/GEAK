@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from minisweagent.benchmark_parsing import compute_best_patch, parse_shape_latencies_ms
+from minisweagent.run.postprocess.benchmark_parsing import compute_best_patch, parse_shape_latencies_ms
 
 
 def test_parse_shape_latencies_ms_extracts_each_shape() -> None:

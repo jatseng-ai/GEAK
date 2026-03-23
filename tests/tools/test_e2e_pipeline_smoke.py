@@ -22,9 +22,9 @@ import tempfile
 
 import pytest
 
-from minisweagent.baseline_metrics import build_baseline_metrics, list_kernels
+from minisweagent.run.preprocess.baseline import build_baseline_metrics, list_kernels
 from minisweagent.tools.check_compat import CheckKernelCompatibilityTool, check_compatibility
-from minisweagent.tools.resolve_kernel_url_impl import resolve_kernel_url
+from minisweagent.run.preprocess.resolve_kernel_url import resolve_kernel_url
 from minisweagent.tools.tools_runtime import ToolRuntime
 
 # ---------------------------------------------------------------------------

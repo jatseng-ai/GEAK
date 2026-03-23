@@ -23,7 +23,11 @@ def _agent_type_to_class() -> dict[str, type]:
 
     Lazy import to avoid circular dependencies at module level.
     """
-    return {}
+    from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
+
+    return {
+        "strategy_agent": StrategyInteractiveAgent,
+    }
 
 
 def _agent_class_to_type() -> dict[type, str]:
