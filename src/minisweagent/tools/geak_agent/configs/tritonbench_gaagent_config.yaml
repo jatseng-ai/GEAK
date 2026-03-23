@@ -1,0 +1,20 @@
+# LLM model
+api_key: "65481c6913004dafb08eee42587844c0"
+model_id: gpt-5
+temperature: 1.0
+
+# agent
+max_perf_debug_num: 5
+mem_file: null #Resuming from Checkpoints
+descendant_num: 1 #offspring
+output_path: "/mcp/outputs/20251212_gaagent_offspring8_gpt5.jsonl"
+iteration_num: 20
+ancestor_num: 5   #ancestor number of perf_candidates used to generate descendant
+mutation: false
+gpu_id: 4
+descendant_debug: 1 # if descendant_debug of descendant pass execution test, then generate descendant_num of new codes.
+metric_order: true
+repo_dir: "/mcp/fused_bucketized"
+code_path: "/mcp/fused_bucketized/origin.hip"
+prompt: "/mcp/fuse_bucketized.yaml"
+test_case: "/mcp/test_benchmark.py"

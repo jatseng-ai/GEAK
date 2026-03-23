@@ -1,0 +1,20 @@
+# LLM model
+api_key: "bdecd15bd6a348d9bb8f7daf6cd023b1"
+model_id: gpt-5
+temperature: 1.0
+
+# agent
+max_perf_debug_num: 5
+mem_file: null #Resuming from Checkpoints
+descendant_num: 2 #5 #offspring
+iteration_num: 20 #0 #10
+ancestor_num: 5   #ancestor number of perf_candidates used to generate descendant
+mutation: false
+gpu_id: 7
+descendant_debug: 1 # if descendant_debug of descendant pass execution test, then generate descendant_num of new codes.
+metric_order: true
+output_path: "/group/ossdphi_algo_scratch_16/cohuang/260112_miniswe_tool/src/minisweagent"
+reset_repo: false
+related_file: null
+use_ori_code: false
+forbid_reflection: false
