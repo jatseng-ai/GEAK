@@ -1,6 +1,7 @@
 """Tests for the agent-based task generator."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,6 @@ from minisweagent.agents.heterogeneous.task_generator import (
     _parse_llm_response,
     generate_tasks,
 )
-from minisweagent.run.preprocess.discovery_types import DiscoveryResult, KernelInfo
 
 
 class FakeAgentClass:
@@ -20,20 +20,17 @@ class FakeAgentClass:
     pass
 
 
-def _make_discovery(
+def _make_kernel_kwargs(
     kernel_type: str = "triton",
-    inner_kernel_path: Path | None = None,
-) -> DiscoveryResult:
-    kernel = KernelInfo(
-        file_path=Path("/workspace/kernel.py"),
-        kernel_name="test_kernel",
-        kernel_type=kernel_type,
-        kernel_language="python",
-        function_names=["kernel_fwd"],
-        has_jit_decorator=True,
-        inner_kernel_path=inner_kernel_path,
-    )
-    return DiscoveryResult(kernels=[kernel], workspace_path=Path("/workspace"))
+) -> dict[str, Any]:
+    return {
+        "kernel_path": "/workspace/kernel.py",
+        "kernel_name": "test_kernel",
+        "kernel_type": kernel_type,
+        "kernel_language": "python",
+        "function_names": ["kernel_fwd"],
+        "workspace_path": "/workspace",
+    }
 
 
 # ---- Agent submits valid JSON -> tasks produced ----
@@ -59,13 +56,12 @@ VALID_TASK_JSON = """[
 
 @patch("minisweagent.agents.heterogeneous.task_generator._run_task_agent", return_value=VALID_TASK_JSON)
 def test_agent_submits_valid_json(mock_agent):
-    dr = _make_discovery("triton")
     model = MagicMock()
     tasks = generate_tasks(
-        discovery_result=dr,
         base_task_context="ctx",
         agent_class=FakeAgentClass,
         model=model,
+        **_make_kernel_kwargs("triton"),
     )
     assert len(tasks) == 2
     assert tasks[0].label == "evolve-inner"
@@ -82,23 +78,21 @@ def test_agent_submits_valid_json(mock_agent):
     side_effect=RuntimeError("agent did not submit"),
 )
 def test_agent_failure_propagates(mock_agent):
-    dr = _make_discovery("triton")
     model = MagicMock()
     with pytest.raises(RuntimeError, match="agent did not submit"):
         generate_tasks(
-            discovery_result=dr,
             base_task_context="ctx",
             agent_class=FakeAgentClass,
             model=model,
+            **_make_kernel_kwargs("triton"),
         )
 
 
 # ---- No kernels -> empty ----
 
 
-def test_no_kernels_returns_empty():
-    dr = DiscoveryResult()
-    tasks = generate_tasks(dr, "ctx", FakeAgentClass, model=MagicMock())
+def test_no_kernel_path_returns_empty():
+    tasks = generate_tasks("ctx", FakeAgentClass, model=MagicMock(), kernel_path="")
     assert tasks == []
 
 
@@ -160,14 +154,11 @@ def test_parse_sorts_by_priority():
 
 
 def test_build_workload_guidance_classifies_hip_search_as_latency_bound():
-    kernel = KernelInfo(
-        file_path=Path("/workspace/rocprim/device_binary_search.hpp"),
-        kernel_name="device_binary_search",
-        kernel_type="unknown",
-        kernel_language="cpp",
-        function_names=[],
-        has_jit_decorator=False,
-    )
+    kernel = {
+        "file_path": "/workspace/rocprim/device_binary_search.hpp",
+        "kernel_name": "device_binary_search",
+        "kernel_type": "unknown",
+    }
     baseline_metrics = {
         "kernel_name": "rocprim::detail::binary_search lower_bound",
         "bottleneck": "latency",
@@ -193,16 +184,12 @@ def test_build_workload_guidance_classifies_hip_search_as_latency_bound():
     assert "Search / pointer-chasing classifier:" in guidance
 
 
-def test_build_workload_guidance_for_triton_deprioritizes_autotune_and_dispatch():
-    kernel = KernelInfo(
-        file_path=Path("/workspace/kernel.py"),
-        kernel_name="fused_rms",
-        kernel_type="triton",
-        kernel_language="python",
-        function_names=["kernel_fwd"],
-        has_jit_decorator=True,
-        has_autotune=True,
-    )
+def test_build_workload_guidance_for_triton_deprioritizes_dispatch():
+    kernel = {
+        "file_path": "/workspace/kernel.py",
+        "kernel_name": "fused_rms",
+        "kernel_type": "triton",
+    }
     baseline_metrics = {
         "kernel_name": "fused_rms_fp8",
         "bottleneck": "memory-bound",
@@ -223,14 +210,11 @@ def test_build_workload_guidance_for_triton_deprioritizes_autotune_and_dispatch(
 
 
 def test_build_workload_guidance_empty_when_no_backend_and_no_metrics():
-    kernel = KernelInfo(
-        file_path=Path("/workspace/kernel.txt"),
-        kernel_name="mystery",
-        kernel_type="unknown",
-        kernel_language="other",
-        function_names=[],
-        has_jit_decorator=False,
-    )
+    kernel = {
+        "file_path": "/workspace/kernel.txt",
+        "kernel_name": "mystery",
+        "kernel_type": "unknown",
+    }
 
     assert _build_workload_guidance(kernel, {}) == ""
 

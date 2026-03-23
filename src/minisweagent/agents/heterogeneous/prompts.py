@@ -278,10 +278,7 @@ Generate optimization tasks for the kernel at {{ kernel_path }}.
 - Name: {{ kernel_name }}
 - Type: {{ kernel_type }}
 - Language: {{ kernel_language }}
-{% if inner_kernel_path %}- Inner kernel: {{ inner_kernel_path }}
-- Inner kernel language: {{ inner_kernel_language }}
-{% endif %}{% if has_autotune %}- Has autotune: yes
-{% endif %}{% if function_names %}- Functions: {{ function_names }}
+{% if function_names %}- Functions: {{ function_names }}
 {% endif %}
 ## Files to read (use `str_replace_editor` with command "view")
 {% if codebase_context_path %}- **Codebase context** (repo layout, kernel dependency tree with optimization targets): {{ codebase_context_path }}

@@ -52,10 +52,10 @@ def _normalized_bottleneck(baseline_metrics: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _is_hip_like_kernel(kernel: Any) -> bool:
-    path = str(getattr(kernel, "file_path", "")).lower()
+def _is_hip_like_kernel(kernel: dict[str, Any]) -> bool:
+    path = str(kernel.get("file_path", "")).lower()
     ext = Path(path).suffix.lower()
-    kernel_type = str(getattr(kernel, "kernel_type", "")).lower()
+    kernel_type = str(kernel.get("kernel_type", "")).lower()
     if kernel_type in {"triton", "ck", "asm"}:
         return False
     return (
@@ -67,15 +67,15 @@ def _is_hip_like_kernel(kernel: Any) -> bool:
     )
 
 
-def _is_triton_like_kernel(kernel: Any) -> bool:
-    path = str(getattr(kernel, "file_path", "")).lower()
-    kernel_type = str(getattr(kernel, "kernel_type", "")).lower()
+def _is_triton_like_kernel(kernel: dict[str, Any]) -> bool:
+    path = str(kernel.get("file_path", "")).lower()
+    kernel_type = str(kernel.get("kernel_type", "")).lower()
     if kernel_type == "triton":
         return True
-    return bool(getattr(kernel, "has_jit_decorator", False)) or ("triton" in path and path.endswith(".py"))
+    return "triton" in path and path.endswith(".py")
 
 
-def _detect_backend(kernel: Any) -> str:
+def _detect_backend(kernel: dict[str, Any]) -> str:
     if _is_triton_like_kernel(kernel):
         return "triton"
     if _is_hip_like_kernel(kernel):
@@ -83,10 +83,10 @@ def _detect_backend(kernel: Any) -> str:
     return "generic"
 
 
-def _is_search_like_workload(kernel: Any, baseline_metrics: dict[str, Any]) -> bool:
+def _is_search_like_workload(kernel: dict[str, Any], baseline_metrics: dict[str, Any]) -> bool:
     evidence_chunks: list[str] = [
-        str(getattr(kernel, "kernel_name", "")),
-        str(getattr(kernel, "file_path", "")),
+        str(kernel.get("kernel_name", "")),
+        str(kernel.get("file_path", "")),
         str(baseline_metrics.get("kernel_name", "")),
     ]
     for top in baseline_metrics.get("top_kernels", []) or []:
@@ -112,9 +112,8 @@ def _profiling_summary_lines(baseline_metrics: dict[str, Any]) -> list[str]:
     ]
 
 
-def _build_triton_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str:
+def _build_triton_guidance(kernel: dict[str, Any], baseline_metrics: dict[str, Any]) -> str:
     bottleneck = _normalized_bottleneck(baseline_metrics)
-    has_autotune = bool(getattr(kernel, "has_autotune", False))
 
     prefer_first = [
         "Algorithmic kernel-body rewrites that change the reduction tree, tiling scheme, decomposition, or math formulation.",
@@ -175,12 +174,6 @@ def _build_triton_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str
             ]
         )
 
-    if has_autotune:
-        deprioritize.insert(
-            0,
-            "Expanding an existing autotune table without a substantive kernel-body change.",
-        )
-
     lines = [
         "Triton backend detected. Prefer profiling-driven kernel-body strategies over autotune or wrapper work.",
         * _profiling_summary_lines(baseline_metrics),
@@ -198,7 +191,7 @@ def _build_triton_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str
     return "\n".join(lines)
 
 
-def _build_hip_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str:
+def _build_hip_guidance(kernel: dict[str, Any], baseline_metrics: dict[str, Any]) -> str:
     metrics = baseline_metrics.get("metrics", {}) or {}
     bottleneck = _normalized_bottleneck(baseline_metrics)
     hbm_util = _safe_float(metrics.get("memory.hbm_bandwidth_utilization"))
@@ -299,7 +292,7 @@ def _build_hip_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _build_workload_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str:
+def _build_workload_guidance(kernel: dict[str, Any], baseline_metrics: dict[str, Any]) -> str:
     """Return backend/workload-specific guidance for task planning."""
     backend = _detect_backend(kernel)
     if backend == "triton":

@@ -181,7 +181,7 @@ def run_heterogeneous_orchestrator(
     ``run/orchestrator.py:run_orchestrator`` when ``heterogeneous=True``.
     """
     from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
-    from minisweagent.run.preprocess.discovery_types import DiscoveryResult
+    from minisweagent.agents.heterogeneous.task_generator import _extract_kernel_meta
     from minisweagent.run.postprocess.evaluation import evaluate_round_best as _evaluate_round_best
     from minisweagent.run.postprocess.results import (
         auto_finalize,
@@ -192,7 +192,7 @@ def run_heterogeneous_orchestrator(
 
     disc_dict = preprocess_ctx.get("discovery") or {}
     kernel_path = preprocess_ctx.get("kernel_path", "")
-    discovery_result = DiscoveryResult.from_dict(disc_dict, kernel_path)
+    kernel_meta = _extract_kernel_meta(disc_dict, kernel_path)
 
     preprocess_dir = output_dir
     for candidate in ("resolved.json", "discovery.json", "profile.json"):
@@ -204,7 +204,7 @@ def run_heterogeneous_orchestrator(
 
     ctx: dict[str, Any] = {
         **preprocess_ctx,
-        "discovery_result": discovery_result,
+        "kernel_meta": kernel_meta,
         "output_dir": str(output_dir),
         "preprocess_dir": str(preprocess_dir),
         "gpu_ids": gpu_ids,
