@@ -1,9 +1,9 @@
-"""Shared helpers for the GEAK preprocessing and orchestration pipelines.
+"""Bootstrap local helpers for the GEAK preprocessing pipeline.
 
-All CLI entry points (``geak``, ``geak-preprocess``, ``geak-orchestrate``,
-``run-tasks``, ``task-generator``) import from this module so that harness
-extraction, validation, profiling, model loading, agent filtering, and
-pipeline-context injection are always identical regardless of entry point.
+This file begins as a copy of ``run/pipeline_helpers.py`` so preprocess can
+own its harness-generation runtime without depending on sibling ``run/``
+modules. It may still contain broader helpers initially and can be pruned
+down once the preprocess boundary is stable.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+from minisweagent.run.preprocess.repo_paths import ensure_preprocess_mcp_importable
 
 REQUIRED_HARNESS_FLAGS = ("--profile", "--correctness", "--benchmark", "--full-benchmark")
 
@@ -149,14 +149,11 @@ def geak_model_factory(
 
 def _ensure_mcp_importable() -> None:
     """Add MCP tool source directories to sys.path if not already present."""
-    for sub in (
+    ensure_preprocess_mcp_importable(
         "mcp_tools/profiler-mcp/src",
         "mcp_tools/metrix-mcp/src",
         "mcp_tools/automated-test-discovery/src",
-    ):
-        p = str(_REPO_ROOT / sub)
-        if p not in sys.path:
-            sys.path.insert(0, p)
+    )
 
 
 # ── harness path extraction ──────────────────────────────────────────

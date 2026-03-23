@@ -1,4 +1,4 @@
-"""Preprocessing pipeline: kernel resolution, discovery, profiling, baselining.
+"""Preprocessing pipeline: owned stage for kernel resolution and harness setup.
 
 The ``geak-preprocess`` CLI runs the modules in this package sequentially:
 
@@ -9,6 +9,16 @@ The ``geak-preprocess`` CLI runs the modules in this package sequentially:
 5. ``baseline``           -- build baseline_metrics.json from profiler output.
 6. ``commandment``        -- generate COMMANDMENT.md (evaluation contract).
 7. ``testcase_cache``     -- cache preprocessor results across runs.
+8. ``harness_utils``      -- local harness/runtime bootstrap helpers.
 
-The main entry point is ``preprocessor.main()``.
+Harness-generation helpers that support this pipeline also live here:
+
+- ``unit_test_agent``     -- generates the fixed harness when discovery is insufficient
+- ``shape_fixer_agent``   -- verifies harness shapes against benchmark/test sources
+
+The main entry points are ``run_preprocessor()`` and ``preprocessor.main()``.
 """
+
+from minisweagent.run.preprocess.preprocessor import run_preprocessor
+
+__all__ = ["run_preprocessor"]

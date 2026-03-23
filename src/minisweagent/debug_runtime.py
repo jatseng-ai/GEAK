@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-_DEBUG_LOG_PATH = Path(os.environ.get("GEAK_DEBUG_LOG_PATH", "/home/sapmajum/.cursor/debug-f9f3d1.log"))
-_DEBUG_SESSION_ID = os.environ.get("GEAK_DEBUG_SESSION_ID", "f9f3d1")
-_DEFAULT_RUN_ID = os.environ.get("GEAK_DEBUG_RUN_ID", "post-fix")
+_DEFAULT_DEBUG_LOG_PATH = Path(tempfile.gettempdir()) / "geak_debug.log"
+_DEBUG_LOG_PATH = Path(os.environ.get("GEAK_DEBUG_LOG_PATH", str(_DEFAULT_DEBUG_LOG_PATH)))
+_DEBUG_SESSION_ID = os.environ.get("GEAK_DEBUG_SESSION_ID", "default")
+_DEFAULT_RUN_ID = os.environ.get("GEAK_DEBUG_RUN_ID", "default")
 
 
 def _tool_name(tool: Any) -> str:

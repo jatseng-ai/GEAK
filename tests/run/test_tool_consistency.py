@@ -134,7 +134,7 @@ def test_codebase_context_cli_calls_generate():
     """codebase-context CLI main() calls generate_codebase_context."""
     import inspect
 
-    from minisweagent.run.codebase_context import main
+    from minisweagent.run.preprocess.codebase_context import main
 
     source = inspect.getsource(main)
     assert "generate_codebase_context" in source

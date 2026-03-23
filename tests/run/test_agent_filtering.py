@@ -125,7 +125,7 @@ class TestParseResponseSafetyNet:
         monkeypatch.delenv("GEAK_FALLBACK_AGENT", raising=False)
 
         from minisweagent.agents.swe_agent import SweAgent
-        from minisweagent.run.task_generator import _parse_llm_response
+        from minisweagent.agents.heterogeneous.task_generator import _parse_llm_response
 
         class _FakeDefault:
             pass
@@ -139,7 +139,7 @@ class TestParseResponseSafetyNet:
         monkeypatch.delenv("GEAK_EXCLUDED_AGENTS", raising=False)
 
         from minisweagent.agents.openevolve_worker import OpenEvolveWorker
-        from minisweagent.run.task_generator import _parse_llm_response
+        from minisweagent.agents.heterogeneous.task_generator import _parse_llm_response
 
         class _FakeDefault:
             pass
@@ -173,7 +173,7 @@ class TestPromptInjection:
         monkeypatch.setenv("GEAK_ALLOWED_AGENTS", "swe_agent")
         monkeypatch.delenv("GEAK_EXCLUDED_AGENTS", raising=False)
 
-        from minisweagent.run.task_generator import _build_agent_restriction_addendum
+        from minisweagent.agents.heterogeneous.task_generator import _build_agent_restriction_addendum
 
         addendum = _build_agent_restriction_addendum()
         assert "swe_agent" in addendum
@@ -184,7 +184,7 @@ class TestPromptInjection:
         monkeypatch.delenv("GEAK_ALLOWED_AGENTS", raising=False)
         monkeypatch.setenv("GEAK_EXCLUDED_AGENTS", "openevolve")
 
-        from minisweagent.run.task_generator import _build_agent_restriction_addendum
+        from minisweagent.agents.heterogeneous.task_generator import _build_agent_restriction_addendum
 
         addendum = _build_agent_restriction_addendum()
         assert "openevolve" in addendum
@@ -194,6 +194,6 @@ class TestPromptInjection:
         monkeypatch.delenv("GEAK_ALLOWED_AGENTS", raising=False)
         monkeypatch.delenv("GEAK_EXCLUDED_AGENTS", raising=False)
 
-        from minisweagent.run.task_generator import _build_agent_restriction_addendum
+        from minisweagent.agents.heterogeneous.task_generator import _build_agent_restriction_addendum
 
         assert _build_agent_restriction_addendum() == ""

@@ -22,7 +22,7 @@ from minisweagent.agents.interactive import InteractiveAgent
 from minisweagent.agents.interactive_textual import TextualAgent
 from minisweagent.agents.parallel_agent import ParallelAgent
 from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
-from minisweagent.agents.unit_test_agent import format_discovery_for_agent
+from minisweagent.run.preprocess.unit_test_agent import format_discovery_for_agent
 from minisweagent.config import builtin_config_dir, get_config_path
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models import get_model

@@ -19,11 +19,9 @@ import json
 import sys
 from pathlib import Path
 
-_repo_root = Path(__file__).resolve().parent.parent.parent
-for _sub in ("mcp_tools/profiler-mcp/src", "mcp_tools/metrix-mcp/src"):
-    _p = str(_repo_root / _sub)
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+from minisweagent.run.preprocess.repo_paths import ensure_preprocess_mcp_importable
+
+ensure_preprocess_mcp_importable("mcp_tools/profiler-mcp/src", "mcp_tools/metrix-mcp/src")
 
 EXAMPLES = """
 Examples (metrix backend, default):

@@ -41,16 +41,13 @@ from __future__ import annotations
 # Import validate_commandment directly from the sibling module to avoid
 # pulling in the full minisweagent.tools package (whose __init__.py imports
 # heavy dependencies like typer via strategy_manager).
-import importlib.util as _ilu
 import re
 from pathlib import Path
 
-_vc_path = Path(__file__).with_name("validate_commandment.py")
-_vc_spec = _ilu.spec_from_file_location("validate_commandment", _vc_path)
-_vc_mod = _ilu.module_from_spec(_vc_spec)
-_vc_spec.loader.exec_module(_vc_mod)
-validate_commandment = _vc_mod.validate_commandment
-format_validation_message = _vc_mod.format_validation_message
+from minisweagent.run.preprocess.validate_commandment import (
+    format_validation_message,
+    validate_commandment,
+)
 
 _MAX_FIX_RETRIES = 3
 
