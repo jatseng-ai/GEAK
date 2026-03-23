@@ -158,6 +158,7 @@ def tool_generate_tasks(
             "round_num": round_num,
             "prev_dir": str(prev_dir),
         },
+        hypothesis_id="H0",
     )
 
     try:
@@ -194,6 +195,7 @@ def tool_generate_tasks(
             "round_num": round_num,
             "task_count": len(task_files),
         },
+        hypothesis_id="H0",
     )
 
     result: dict[str, Any] = {
