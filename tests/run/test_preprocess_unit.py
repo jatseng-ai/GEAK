@@ -448,3 +448,164 @@ class TestShapesUsedParsing:
         stdout = "GEAK_SHAPES_USED=[(3, 2, 1), (1, 2, 3)]"
         result = extract_shapes_used(stdout)
         assert result == [(3, 2, 1), (1, 2, 3)]
+
+    def test_index_format(self):
+        from tests.run.test_harness_variance import extract_shapes_used
+        stdout = "GEAK_SHAPES_USED=[0, 3, 7, 12, 24]"
+        result = extract_shapes_used(stdout)
+        assert result == [0, 3, 7, 12, 24]
+
+
+# ===================================================================
+# Test 9: PreprocessContext contract enforcement
+# ===================================================================
+
+class TestPreprocessContractEnforcement:
+    """Verify that a mocked preprocessing run produces a valid
+    PreprocessContext with all required fields."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_path(self):
+        import sys
+        repo = Path(__file__).resolve().parent.parent.parent
+        if str(repo / "src") not in sys.path:
+            sys.path.insert(0, str(repo / "src"))
+
+    def _make_mock_output(self, tmp):
+        """Create a fake preprocessing output directory with all artifacts."""
+        out = Path(tmp)
+        kernel = out / "kernel.py"
+        kernel.write_text("@triton.jit\ndef my_kernel(): pass")
+        harness = out / "test_kernel_harness.py"
+        harness.write_text(
+            "import argparse\n"
+            "p = argparse.ArgumentParser()\n"
+            "p.add_argument('--profile')\n"
+            "p.add_argument('--correctness')\n"
+            "p.add_argument('--benchmark')\n"
+            "p.add_argument('--full-benchmark')\n"
+        )
+        (out / "resolved.json").write_text(json.dumps({
+            "local_file_path": str(kernel),
+            "local_repo_path": str(out),
+        }))
+        (out / "discovery.json").write_text(json.dumps({
+            "kernel": {"name": "my_kernel", "type": "triton", "file": str(kernel)},
+            "tests": [], "benchmarks": [],
+        }))
+        (out / "CODEBASE_CONTEXT.md").write_text("# Context")
+        (out / "COMMANDMENT.md").write_text("# Commandment")
+        (out / "baseline_metrics.json").write_text(json.dumps({"duration_us": 100}))
+        (out / "profile.json").write_text(json.dumps({"success": True}))
+        (out / "harness_results.json").write_text(json.dumps([
+            {"mode": "correctness", "success": True, "returncode": 0, "stdout": "", "stderr": "", "duration_s": 1.0},
+        ]))
+        (out / "testcase_selection.json").write_text(json.dumps({
+            "selected_source": "unit_test_agent",
+            "test_command": f"python {harness} --correctness",
+            "harness_path": str(harness),
+        }))
+
+        ctx = {
+            "kernel_path": str(kernel),
+            "repo_root": str(out),
+            "harness_path": str(harness),
+            "test_command": f"python {harness} --correctness",
+            "resolved": {"local_file_path": str(kernel), "local_repo_path": str(out)},
+            "discovery": {"tests": [], "benchmarks": []},
+            "codebase_context_path": str(out / "CODEBASE_CONTEXT.md"),
+            "harness_results": [{"mode": "correctness", "success": True}],
+            "baseline_metrics": {"duration_us": 100},
+            "commandment": "# Commandment",
+            "testcase_selection": {"selected_source": "unit_test_agent"},
+        }
+        return ctx, out
+
+    def test_from_preprocessor_output_validates(self):
+        from minisweagent.run.preprocess.context import PreprocessContext
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, out = self._make_mock_output(tmp)
+            pc = PreprocessContext.from_preprocessor_output(ctx, out)
+            errors = pc.validate()
+            assert errors == [], f"Contract validation failed: {errors}"
+
+    def test_required_fields_are_set(self):
+        from minisweagent.run.preprocess.context import PreprocessContext
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, out = self._make_mock_output(tmp)
+            pc = PreprocessContext.from_preprocessor_output(ctx, out)
+            assert pc.kernel_path, "kernel_path must be set"
+            assert pc.repo_root, "repo_root must be set"
+            assert pc.harness_path, "harness_path must be set"
+            assert pc.preprocess_dir, "preprocess_dir must be set"
+
+    def test_optional_paths_exist_on_disk(self):
+        from minisweagent.run.preprocess.context import PreprocessContext
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, out = self._make_mock_output(tmp)
+            pc = PreprocessContext.from_preprocessor_output(ctx, out)
+            if pc.commandment_path:
+                assert Path(pc.commandment_path).is_file()
+            if pc.baseline_metrics_path:
+                assert Path(pc.baseline_metrics_path).is_file()
+            if pc.profiling_result_path:
+                assert Path(pc.profiling_result_path).is_file()
+
+    def test_harness_passes_static_validation(self):
+        from minisweagent.run.preprocess.context import PreprocessContext
+        from minisweagent.run.pipeline_helpers import validate_harness
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, out = self._make_mock_output(tmp)
+            pc = PreprocessContext.from_preprocessor_output(ctx, out)
+            valid, errors = validate_harness(pc.harness_path)
+            assert valid, f"Harness at {pc.harness_path} failed validation: {errors}"
+
+    def test_context_survives_json_roundtrip(self):
+        from minisweagent.run.preprocess.context import PreprocessContext
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, out = self._make_mock_output(tmp)
+            pc = PreprocessContext.from_preprocessor_output(ctx, out)
+
+            json_path = Path(tmp) / "preprocess_context.json"
+            pc.to_json(json_path)
+            loaded = PreprocessContext.from_json(json_path)
+
+            assert loaded.kernel_path == pc.kernel_path
+            assert loaded.harness_path == pc.harness_path
+            assert loaded.preprocess_dir == pc.preprocess_dir
+            assert loaded.discovery == pc.discovery
+            assert loaded.baseline_metrics == pc.baseline_metrics
+
+    def test_harness_only_produces_valid_context(self):
+        """GEAK_HARNESS_ONLY=1 skips profiling/baseline but context must
+        still have required fields."""
+        from minisweagent.run.preprocess.context import PreprocessContext
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, out = self._make_mock_output(tmp)
+            # Remove optional artifacts (simulating HARNESS_ONLY)
+            (out / "baseline_metrics.json").unlink()
+            (out / "profile.json").unlink()
+            (out / "COMMANDMENT.md").unlink()
+            ctx.pop("baseline_metrics", None)
+            ctx.pop("commandment", None)
+
+            pc = PreprocessContext.from_preprocessor_output(ctx, out)
+            errors = pc.validate()
+            assert errors == [], f"HARNESS_ONLY context should be valid: {errors}"
+            assert pc.baseline_metrics_path is None
+            assert pc.profiling_result_path is None
+            assert pc.commandment_path is None
+
+    def test_orchestrator_can_consume_context(self):
+        """Verify the orchestrator's expected keys are present."""
+        from minisweagent.run.preprocess.context import PreprocessContext
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx, out = self._make_mock_output(tmp)
+            pc = PreprocessContext.from_preprocessor_output(ctx, out)
+            d = pc.to_dict()
+            # Orchestrator reads these keys
+            assert "kernel_path" in d
+            assert "repo_root" in d
+            assert "test_command" in d
+            assert "harness_path" in d
+            assert "discovery" in d
