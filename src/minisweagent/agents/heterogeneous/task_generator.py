@@ -43,553 +43,22 @@ from typing import Any
 
 from minisweagent.agents.agent_spec import AgentTask
 from minisweagent.debug_runtime import emit_debug_log, model_tools_snapshot, tool_names
-from minisweagent.agents.heterogeneous.task_planner import _GPU_AND_PROFILER_RULES
 from minisweagent.run.preprocess.discovery_types import DiscoveryResult
+from minisweagent.agents.heterogeneous.prompts import (
+    GPU_AND_PROFILER_RULES as _GPU_AND_PROFILER_RULES,
+    TASKGEN_SYSTEM_PROMPT as _SYSTEM_PROMPT,
+    TASKGEN_INSTANCE_TEMPLATE as _INSTANCE_TEMPLATE,
+    build_agent_restriction_addendum as _build_agent_restriction_addendum,
+)
+from minisweagent.agents.heterogeneous.workload_guidance import _build_workload_guidance  # noqa: F401
+from minisweagent.agents.heterogeneous.result_scanning import (  # noqa: F401
+    scan_previous_results as _scan_previous_results,
+    scan_previous_tasks as _scan_previous_tasks,
+)
 
 logger = logging.getLogger(__name__)
 
 _KNOWLEDGE_BASE_REL = "knowledge_base/optimization_strategies.py"
-
-_HIP_SEARCH_HINT_PATTERNS = (
-    "binary_search",
-    "lower_bound",
-    "upper_bound",
-    "search_n",
-    "device_search",
-    "haystack",
-    "needle",
-)
-
-# ============================================================================
-# Prompt templates for the planning agent
-# ============================================================================
-
-_SYSTEM_PROMPT = textwrap.dedent("""\
-You are an expert GPU kernel optimization planner for AMD GPUs. You have
-access to profiling data, kernel metadata, and a knowledge base of
-optimization strategies via file paths. Read the files you need using
-the `str_replace_editor` tool (command: "view"), reason about the best
-optimization approach, then submit your task list as JSON via the
-`submit` tool.
-
-## Available Agents and Tools
-
-### Agents (task execution)
-
-1. **strategy_agent** (default and only agent type) -- An LLM-guided agent
-   with bash, editor, save_and_test, submit, profile_kernel,
-   baseline_metrics, and strategy_manager. It reads code, reasons about
-   bottlenecks, makes edits, then tests and profiles. Best for targeted
-   edits, autotune configs, algorithmic rewrites, and any optimization
-   where the agent should read-think-edit-test-profile on its own.
-
-## PRIORITY DIRECTIVE -- KERNEL ALGORITHMIC IMPROVEMENT IS THE PRIMARY GOAL
-
-Your PRIMARY goal is **algorithmic improvement of the GPU kernel body** --
-the `@triton.jit` functions, HIP `__global__` / `__device__` kernels, CK
-template bodies, or ASM routines.  This means changing *how the computation
-is performed*: different tiling strategies, different reduction algorithms,
-fused operations, restructured memory access patterns, alternative scan /
-sort / attention algorithms -- all **inside** the kernel body itself.
-
-**Wrapper changes are LOW priority**: Launch config tuning (`num_warps`,
-`BLOCK_SIZE`), Python dispatch changes (`matmul` -> `mm`), import routing
-changes (`aiter` bypass), and `repeat_interleave` -> `expand` style wrapper
-fixes are acceptable ONLY after exhausting kernel-body approaches.  Assign
-wrapper-only tasks priority 15.
-
-**Do NOT give up**: Even if the kernel looks well-optimized by human experts,
-you MUST attempt novel algorithmic improvements.  The entire purpose of this
-agent is to discover improvements that humans missed.  Generate at least 3-5
-genuinely different *algorithmic* approaches per kernel -- not 3-5 variations
-of launch config parameters.
-
-It is acceptable to leave some GPUs idle rather than spending them on
-wrapper-only or dispatch-only tasks before kernel-body avenues are exhausted.
-
-## Task priority scheme (lower number = higher priority = runs first)
-
-- 0: Novel algorithmic kernel rewrites (different algorithm, different reduction/scan tree, split kernel variants, eliminate expensive ops like tl.reshape/tl.flip)
-- 3: Operation fusion (fuse adjacent kernels, fuse elementwise ops into kernel body, fuse normalization + quantization)
-- 4: Shape-adaptive optimization (use @triton.autotune with multiple configs so optimal BLOCK_S/num_warps is selected per input shape; or build 2-3 kernel variants specialized to different shape categories, with any wrapper selection logic kept secondary)
-- 5: Kernel-body memory access restructuring, computation reordering, LDS optimization, register pressure optimization
-- 8: Autotune configs, parameter search (BLOCK_S, num_warps, num_stages -- kernel-level but not algorithmic)
-- 15: Wrapper/launch-config/dispatch-only changes (lowest priority)
-
-Dispatch-path checks are allowed but LOW priority. Only propose them when the
-profile strongly suggests an unfused or misrouted entry path, and still assign
-them priority 15 behind kernel-body algorithmic work.
-
-## Your analysis process
-
-1. Use `str_replace_editor` with command "view" to read the profiling file
-   first. Identify which sub-kernels are real optimization targets vs.
-   framework noise (e.g., PyTorch ATen elementwise ops, ROCm runtime
-   kernels, hipMemcpy internals).
-2. Read the codebase context file for the kernel dependency tree. Every file
-   listed is in-repo code the target kernel depends on and is a potential
-   optimization target -- improving any of them can reduce the target
-   kernel's overall latency. Note which functions are imported from each
-   dependency to identify what to optimize.
-3. Read the discovery file for kernel metadata (language, inner kernel, etc.).
-4. Read the knowledge base for applicable optimization strategies.
-5. Optionally read baseline metrics, COMMANDMENT.md, deep search findings,
-   or prior results if the paths are provided.
-6. Group related kernels (e.g., multiple Tensile GEMMs with different tile
-   sizes are one target; CK GEMM variants are another).
-7. For each group, propose a specific optimization task naming:
-   - The target sub-kernels
-   - The backend/language (CK, Tensile, Triton, HIP, PyTorch)
-   - Concrete strategies from the knowledge base
-   - Which agent/tool to use (and specific tool commands if applicable)
-   - Expected impact
-8. Prioritize tasks that modify the GPU kernel body code.  Wrapper-only
-   changes (Python-level dispatch, launch config, PyTorch API swaps) must
-   be assigned priority 15 and should only appear after at least 3
-   kernel-body algorithmic tasks have been generated.
-9. If prior round results or tasks are provided, do NOT re-generate tasks
-   for strategies that already appeared in prior rounds, regardless of
-   whether they succeeded or failed. Focus on genuinely new approaches or
-   strategies that build on what worked.
-10. If a "Workload / Backend Guidance" block is present, treat it as
-   mandatory. Generate at least 3 tasks from the "Prefer First" families
-   in that block before proposing anything from the "Deprioritize Until
-   Later" bucket (for example autotune-only, launch-only, or dispatch-only
-   work).
-
-## Output format
-
-When you are done analyzing, call the `submit` tool with the `summary`
-parameter containing a JSON array of task objects. Each task has:
-- "label": short kebab-case identifier (e.g. "ck-tile-tuning", "triton-tiling-rewrite")
-- "priority": integer 0-15
-- "agent_type": "strategy_agent"
-- "kernel_language": "python", "cpp", or "asm"
-- "num_gpus": integer (default 1). Each task uses 1 GPU.
-- "task_prompt": detailed instructions for the sub-agent (specific
-  optimization focus, which tools to use, what to measure). This is
-  the FULL prompt the agent will see.
-
-## Rules for task_prompt content
-
-{gpu_rules}
-
-**FORBIDDEN tasks**: NEVER generate tasks that modify the test harness,
-test file, or test command. The test harness is the evaluation contract --
-it defines correctness and must remain unchanged. Tasks like "test harness
-optimization", "test improvement", or "benchmark refactoring" are INVALID.
-
-**REQUIRED focus**: Tasks MUST target the GPU kernel body -- the `@triton.jit`
-function, the HIP `__global__` kernel, the CK template, or the ASM routine.
-The agent should change the *algorithm* or *implementation* inside the kernel.
-Wrapper-level changes (Python dispatch, launch config knobs, PyTorch API
-swaps) are low-value and must not dominate the task list.
-
-**Path deduplication**: The task file metadata already stores kernel_path,
-commandment, baseline_metrics, and profiling paths. Do NOT repeat these
-file paths in the task_prompt body. Instead, reference them generically
-(e.g. "the kernel file", "the COMMANDMENT", "baseline metrics"). The
-sub-agent receives these paths automatically from the task metadata.
-
-**Baseline comparison**: Each task_prompt MUST instruct the sub-agent to
-compare its results against the baseline metrics provided in the task
-metadata. The sub-agent should report the specific metric improvement
-(e.g. duration reduction, bandwidth improvement) relative to baseline.
-
-**COMMANDMENT adherence**: Each task_prompt MUST instruct the sub-agent
-to read and follow the COMMANDMENT file. The COMMANDMENT defines the
-correctness criteria and constraints. Any changes that violate the
-COMMANDMENT must be rejected by the sub-agent itself.
-
-**Verification**: Each task_prompt MUST include instructions to:
-1. Read the COMMANDMENT and follow its constraints
-2. Verify correctness after making changes (use the `save_and_test` tool)
-3. Profile the result to measure improvement (use the `profile_kernel` tool)
-4. Compare results against baseline metrics and report before/after numbers
-5. If correctness tests fail, revert changes and report failure
-
-Submit ONLY the JSON array via the submit tool. No markdown fences, no explanation.
-""").format(gpu_rules=_GPU_AND_PROFILER_RULES.strip())
-
-
-def _build_agent_restriction_addendum() -> str:
-    """Return a prompt paragraph describing agent restrictions, or empty string."""
-    from minisweagent.agents.agent_spec import ALL_AGENT_TYPES, get_allowed_agent_types
-
-    allowed = get_allowed_agent_types()
-    if allowed is None:
-        return ""
-
-    excluded_raw = os.environ.get("GEAK_EXCLUDED_AGENTS", "").strip()
-    allowed_raw = os.environ.get("GEAK_ALLOWED_AGENTS", "").strip()
-
-    if allowed_raw:
-        agent_list = ", ".join(sorted(allowed))
-        return (
-            f"\n\n**Agent restriction**: Only the following agents are available "
-            f"for this run: {agent_list}. You MUST NOT assign tasks to any other "
-            f"agent type. Use only these agent types in the `agent_type` field.\n"
-        )
-
-    if excluded_raw:
-        excluded = ALL_AGENT_TYPES - allowed
-        excluded_list = ", ".join(sorted(excluded))
-        return (
-            f"\n\n**Agent restriction**: The following agents are NOT available "
-            f"for this run: {excluded_list}. You MUST NOT assign tasks to these "
-            f"agent types. Choose from the remaining available agents instead.\n"
-        )
-
-    return ""
-
-
-_INSTANCE_TEMPLATE = textwrap.dedent("""\
-Generate optimization tasks for the kernel at {{ kernel_path }}.
-
-## Kernel Metadata
-- Name: {{ kernel_name }}
-- Type: {{ kernel_type }}
-- Language: {{ kernel_language }}
-{% if inner_kernel_path %}- Inner kernel: {{ inner_kernel_path }}
-- Inner kernel language: {{ inner_kernel_language }}
-{% endif %}{% if has_autotune %}- Has autotune: yes
-{% endif %}{% if function_names %}- Functions: {{ function_names }}
-{% endif %}
-## Files to read (use `str_replace_editor` with command "view")
-{% if codebase_context_path %}- **Codebase context** (repo layout, kernel dependency tree with optimization targets): {{ codebase_context_path }}
-{% endif %}{% if discovery_path %}- **Discovery** (kernel info, tests, benchmarks): {{ discovery_path }}
-{% endif %}{% if profiling_path %}- **Profiling** (sub-kernels, bottlenecks, metrics): {{ profiling_path }}
-{% endif %}{% if baseline_metrics_path %}- **Baseline metrics**: {{ baseline_metrics_path }}
-{% endif %}{% if commandment_path %}- **COMMANDMENT.md** (evaluation contract): {{ commandment_path }}
-{% endif %}{% if knowledge_base_path %}- **Knowledge base** (optimization strategies): {{ knowledge_base_path }}
-{% endif %}{% if deep_search_path %}- **Deep search findings**: {{ deep_search_path }}
-{% endif %}{% if previous_results_path %}- **Prior round results** (what actually happened): {{ previous_results_path }}
-{% endif %}{% if previous_tasks_path %}- **Prior tasks planned** (avoid repeating): {{ previous_tasks_path }}
-{% endif %}{% if round_evaluations_path %}- **Round evaluations** (orchestrator-verified results): {{ round_evaluations_path }}
-{% endif %}
-{% if memory_context %}
-## Optimization Memory (from past kernel optimization runs)
-{{ memory_context }}
-{% endif %}
-{% if workload_guidance %}
-## Workload / Backend Guidance
-{{ workload_guidance }}
-{% endif %}
-{% if num_gpus > 1 %}## GPU Budget
-Available GPUs: {{ num_gpus }}
-Generate enough tasks so the total num_gpus across all tasks is close to {{ num_gpus }}.
-It is acceptable to leave some GPUs idle rather than padding the batch with
-low-priority wrapper / dispatch work.
-Each task uses 1 GPU.
-{% endif %}
-## Instructions
-
-Read the profiling file first to understand the sub-kernel landscape. Then
-read the codebase context file for the kernel dependency tree -- every
-dependency listed is in-repo code that could be an optimization target.
-Read the discovery file for additional kernel metadata, and consult the
-knowledge base for applicable strategies. Finally, submit your task list
-as JSON via the `submit` tool.
-
-{{ base_task_context }}
-""")
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None or value == "":
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _format_optional_float(value: float | None, suffix: str = "") -> str:
-    if value is None:
-        return "unknown"
-    return f"{value:.1f}{suffix}"
-
-
-def _normalized_bottleneck(baseline_metrics: dict[str, Any]) -> str:
-    text = str(baseline_metrics.get("bottleneck", "unknown")).lower().strip()
-    if "latency" in text:
-        return "latency"
-    if "memory" in text:
-        return "memory"
-    if "compute" in text:
-        return "compute"
-    if "lds" in text:
-        return "lds"
-    if "balanced" in text:
-        return "balanced"
-    return "unknown"
-
-
-def _is_hip_like_kernel(kernel: Any) -> bool:
-    path = str(getattr(kernel, "file_path", "")).lower()
-    ext = Path(path).suffix.lower()
-    kernel_type = str(getattr(kernel, "kernel_type", "")).lower()
-    if kernel_type in {"triton", "ck", "asm"}:
-        return False
-    return (
-        kernel_type == "hip"
-        or (
-            ext in {".hpp", ".h", ".cpp", ".cu", ".hip"}
-            and any(token in path for token in ("rocprim", "hip", "rocm"))
-        )
-    )
-
-
-def _is_triton_like_kernel(kernel: Any) -> bool:
-    path = str(getattr(kernel, "file_path", "")).lower()
-    kernel_type = str(getattr(kernel, "kernel_type", "")).lower()
-    if kernel_type == "triton":
-        return True
-    return bool(getattr(kernel, "has_jit_decorator", False)) or ("triton" in path and path.endswith(".py"))
-
-
-def _detect_backend(kernel: Any) -> str:
-    if _is_triton_like_kernel(kernel):
-        return "triton"
-    if _is_hip_like_kernel(kernel):
-        return "hip"
-    return "generic"
-
-
-def _is_search_like_workload(kernel: Any, baseline_metrics: dict[str, Any]) -> bool:
-    evidence_chunks: list[str] = [
-        str(getattr(kernel, "kernel_name", "")),
-        str(getattr(kernel, "file_path", "")),
-        str(baseline_metrics.get("kernel_name", "")),
-    ]
-    for top in baseline_metrics.get("top_kernels", []) or []:
-        evidence_chunks.append(str(top.get("name", "")))
-    haystack = " ".join(evidence_chunks).lower()
-    return any(pat in haystack for pat in _HIP_SEARCH_HINT_PATTERNS)
-
-
-def _profiling_summary_lines(baseline_metrics: dict[str, Any]) -> list[str]:
-    metrics = baseline_metrics.get("metrics", {}) or {}
-    duration_us = _safe_float(baseline_metrics.get("duration_us"))
-    hbm_util = _safe_float(metrics.get("memory.hbm_bandwidth_utilization"))
-    l2_hit = _safe_float(metrics.get("memory.l2_hit_rate"))
-    bottleneck = _normalized_bottleneck(baseline_metrics)
-    return [
-        "Profiling summary:",
-        (
-            f"- Bottleneck: {bottleneck}"
-            f"; kernel duration: {_format_optional_float(duration_us, ' us')}"
-            f"; HBM utilization: {_format_optional_float(hbm_util, '%')}"
-            f"; L2 hit rate: {_format_optional_float(l2_hit, '%')}"
-        ),
-    ]
-
-
-def _build_triton_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str:
-    bottleneck = _normalized_bottleneck(baseline_metrics)
-    has_autotune = bool(getattr(kernel, "has_autotune", False))
-
-    prefer_first = [
-        "Algorithmic kernel-body rewrites that change the reduction tree, tiling scheme, decomposition, or math formulation.",
-        "Operation fusion or launch-count reduction when adjacent work can be merged into the Triton kernel body.",
-    ]
-    consider_next = [
-        "Shape-specialized kernel variants when different input regimes clearly want different algorithms or tile structures.",
-        "Kernel-body memory-layout and live-range cleanup that directly supports the hottest profiled path.",
-    ]
-    deprioritize = [
-        "@triton.autotune-only config sweeps.",
-        "Pure num_warps / num_stages / BLOCK_* parameter search without a kernel-body change.",
-        "Python dispatch, import-routing, or wrapper-only edits unless profiling clearly shows the wrapper dominates.",
-    ]
-
-    if bottleneck == "memory":
-        prefer_first.extend(
-            [
-                "Memory-access rewrites inside the kernel body: better blocking, fewer redundant loads/stores, and higher SRAM/L2 reuse.",
-                "Masking, pointer-arithmetic, or load/store simplifications that reduce HBM traffic on the hottest path.",
-            ]
-        )
-        consider_next.append(
-            "Vectorized or blocked load/store patterns when they are part of a broader kernel-body memory-traffic reduction plan."
-        )
-    elif bottleneck == "compute":
-        prefer_first.extend(
-            [
-                "Instruction-count reduction and control-flow simplification inside hot loops.",
-                "MFMA / tl.dot-friendly reformulations, cheaper math primitives, or algorithmic approximations when correct.",
-            ]
-        )
-        consider_next.append(
-            "Register-pressure and live-range reductions that let the compiler schedule the kernel body more efficiently."
-        )
-    elif bottleneck == "latency":
-        prefer_first.extend(
-            [
-                "Fuse adjacent short kernels so each launch performs materially more work.",
-                "Increase work per program or use persistent / multi-tile kernel patterns that amortize launch overhead.",
-            ]
-        )
-        consider_next.append(
-            "Shape-specialized kernel variants for small vs large shapes so short kernels are not forced into one-size-fits-all code."
-        )
-    elif bottleneck == "lds":
-        prefer_first.extend(
-            [
-                "LDS-bank-conflict reduction and staged-access restructuring inside the kernel body.",
-                "Move transient data from LDS to registers when it reduces LDS pressure without hurting occupancy too much.",
-            ]
-        )
-    else:
-        prefer_first.extend(
-            [
-                "Profiling-driven kernel-body simplifications on the hottest sub-kernels instead of generic parameter sweeps.",
-                "Common kernel optimization strategies such as fusion, shape-specialized variants, and memory/computation reordering.",
-            ]
-        )
-
-    if has_autotune:
-        deprioritize.insert(
-            0,
-            "Expanding an existing autotune table without a substantive kernel-body change.",
-        )
-
-    lines = [
-        "Triton backend detected. Prefer profiling-driven kernel-body strategies over autotune or wrapper work.",
-        * _profiling_summary_lines(baseline_metrics),
-        "Planning policy:",
-        "- Fill most task slots with 'Prefer First' families below.",
-        "- Only add autotune / launch / wrapper tasks after at least 3 preferred-family tasks exist.",
-        "- Leave GPUs idle if the remaining ideas are only low-priority wrapper work.",
-        "Prefer First:",
-        *[f"- {item}" for item in prefer_first],
-        "Consider Next:",
-        *[f"- {item}" for item in consider_next],
-        "Deprioritize Until Later:",
-        *[f"- {item}" for item in deprioritize],
-    ]
-    return "\n".join(lines)
-
-
-def _build_hip_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str:
-    metrics = baseline_metrics.get("metrics", {}) or {}
-    bottleneck = _normalized_bottleneck(baseline_metrics)
-    hbm_util = _safe_float(metrics.get("memory.hbm_bandwidth_utilization"))
-    bandwidth_deprioritized = bottleneck == "latency" and (hbm_util is None or hbm_util < 10.0)
-    is_search_like = _is_search_like_workload(kernel, baseline_metrics)
-
-    prefer_first = [
-        "Algorithmic HIP kernel-body rewrites that change the search / reduction / tiling structure.",
-        "Common kernel optimizations driven by the hottest profiled path, not by generic occupancy or launch heuristics.",
-    ]
-    consider_next = [
-        "Kernel-body memory-layout, register-pressure, or LDS-usage cleanup that directly helps the profiled bottleneck.",
-        "Size-specialized kernel variants when one generic implementation is serving multiple very different workload regimes.",
-    ]
-    deprioritize = [
-        "Launch-config or occupancy-only tuning.",
-        "Wrapper / dispatch / copy-path edits unless profiling shows they dominate total time.",
-    ]
-
-    if bottleneck == "memory":
-        prefer_first.extend(
-            [
-                "Coalescing, vectorized access, or LDS staging when they directly raise effective bandwidth on the hot path.",
-                "Global-memory traffic reduction by fusing steps or recomputing cheap values instead of reloading them.",
-            ]
-        )
-        consider_next.append(
-            "Wavefront-level memory-access reordering or bank-conflict reduction when it is supported by the profile."
-        )
-    elif bottleneck == "compute":
-        prefer_first.extend(
-            [
-                "Instruction-count reduction, branch simplification, and cheaper per-thread math in the hottest loops.",
-                "Wave intrinsics, MFMA-friendly decomposition, or unrolled inner loops when they reduce compute bottlenecks.",
-            ]
-        )
-    elif bottleneck == "latency":
-        prefer_first.extend(
-            [
-                "Branchless/control-flow simplification that reduces serialized decision cost in short kernels.",
-                "Operation-specific specialization so the hot path does not pay for generic functionality it does not need.",
-                "Wavefront-cooperative or persistent-work patterns that amortize per-launch or per-query overhead.",
-            ]
-        )
-        if is_search_like:
-            prefer_first.extend(
-                [
-                    "Size-specialized kernel variants for separate small / medium / huge haystack paths.",
-                    "Wavefront-cooperative upper-level search or coarse-index narrowing when preprocessing can be amortized.",
-                ]
-            )
-        if bandwidth_deprioritized:
-            deprioritize.insert(0, "Bandwidth-maximization or generic vectorization ideas as the main strategy.")
-            deprioritize.insert(1, "Items-per-thread or throughput-only tuning without a latency-reduction hypothesis.")
-    elif bottleneck == "lds":
-        prefer_first.extend(
-            [
-                "LDS-bank-conflict reduction and staged-access redesign inside the kernel body.",
-                "Register-vs-LDS tradeoff changes that lower LDS pressure on the hot path.",
-            ]
-        )
-    else:
-        prefer_first.extend(
-            [
-                "Fusion, algorithmic simplification, and memory/computation reordering based on the hottest profiled sub-kernels.",
-                "Operation-specific or size-specific kernel variants when the profile suggests one implementation is serving mismatched regimes.",
-            ]
-        )
-
-    lines = [
-        "HIP backend detected. Prefer profiling-driven kernel-body strategies over launch tuning or wrapper work.",
-        * _profiling_summary_lines(baseline_metrics),
-        "Planning policy:",
-        "- Fill most task slots with 'Prefer First' families below.",
-        "- Only add launch / dispatch / wrapper tasks after at least 3 preferred-family tasks exist.",
-        "- Leave GPUs idle if the remaining ideas are only low-priority wrapper work.",
-        "Prefer First:",
-        *[f"- {item}" for item in prefer_first],
-        "Consider Next:",
-        *[f"- {item}" for item in consider_next],
-        "Deprioritize Until Later:",
-        *[f"- {item}" for item in deprioritize],
-    ]
-
-    if is_search_like and bottleneck == "latency":
-        l2_hit = _safe_float(metrics.get("memory.l2_hit_rate"))
-        lines.extend(
-            [
-                "Search / pointer-chasing classifier:",
-                (
-                    f"- Evidence: bottleneck={bottleneck}; HBM utilization={_format_optional_float(hbm_util, '%')}; "
-                    f"L2 hit rate={_format_optional_float(l2_hit, '%')}"
-                ),
-                "- Treat this as latency-bound search work, so branchlessness, specialization, and cooperative search matter more than throughput tuning.",
-            ]
-        )
-
-    return "\n".join(lines)
-
-
-def _build_workload_guidance(kernel: Any, baseline_metrics: dict[str, Any]) -> str:
-    """Return backend/workload-specific guidance for task planning."""
-    backend = _detect_backend(kernel)
-    if backend == "triton":
-        return _build_triton_guidance(kernel, baseline_metrics)
-    if backend == "hip":
-        return _build_hip_guidance(kernel, baseline_metrics)
-    if not baseline_metrics:
-        return ""
-    lines = [
-        "Backend-specific classifier unavailable, but profiling guidance is still mandatory.",
-        * _profiling_summary_lines(baseline_metrics),
-        "Prefer First:",
-        "- Algorithmic kernel-body rewrites, fusion, and common kernel optimizations suggested by the hottest profiled path.",
-        "Deprioritize Until Later:",
-        "- Autotune-only, launch-only, and dispatch-only work unless profiling strongly implicates them.",
-    ]
-    return "\n".join(lines)
 
 
 # ============================================================================
@@ -736,6 +205,60 @@ def generate_tasks_from_content(
                 f.unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+def write_task_files(
+    tasks: list[AgentTask],
+    output_dir: Path,
+    *,
+    kernel_path: str = "",
+    repo_root: str = "",
+    commandment: str = "",
+    baseline_metrics: str = "",
+    profiling: str = "",
+    codebase_context: str = "",
+    benchmark_baseline: str = "",
+    test_command: str = "",
+    starting_patch: str = "",
+    round_num: int = 1,
+) -> list[Path]:
+    """Write AgentTask objects to .md task files on disk.
+
+    Returns the list of written file paths.  Used by both the orchestrator
+    tool (``tool_generate_tasks``) and the CLI (``main``).
+    """
+    from minisweagent.run.task_file import write_task_file
+    from minisweagent.agents.agent_spec import _agent_class_to_type
+
+    class_to_type = _agent_class_to_type()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+
+    for t in tasks:
+        filename = f"{t.priority:02d}_{t.label}.md"
+        task_path = output_dir / filename
+        metadata = {
+            "label": t.label,
+            "priority": t.priority,
+            "agent_type": class_to_type.get(t.agent_class, "strategy_agent"),
+            "kernel_language": t.kernel_language,
+            "kernel_path": kernel_path,
+            "repo_root": repo_root,
+            "commandment": commandment,
+            "baseline_metrics": baseline_metrics,
+            "profiling": profiling,
+            "codebase_context": codebase_context,
+            "benchmark_baseline": benchmark_baseline,
+            "starting_patch": starting_patch,
+            "num_gpus": t.num_gpus,
+            "test_command": test_command,
+            "round": round_num,
+        }
+        body = f"# {t.label}\n\n{t.task}\n"
+        write_task_file(task_path, metadata, body)
+        paths.append(task_path)
+
+    return paths
 
 
 # ============================================================================
@@ -1034,137 +557,6 @@ def _parse_llm_response(
 # ============================================================================
 
 
-def _scan_single_round_results(results_dir: Path) -> list[str]:
-    """Scan a single round's results directory and return section strings."""
-    import re as _re
-
-    sections: list[str] = []
-    task_dirs = sorted(
-        d for d in results_dir.iterdir() if d.is_dir() and d.name not in ("worktrees",) and not d.name.startswith(".")
-    )
-    if not task_dirs:
-        return sections
-
-    for td in task_dirs:
-        label = td.name
-        patches = sorted(td.glob("patch_*.patch"))
-        test_outputs = sorted(td.glob("patch_*_test.txt"))
-        log_files = sorted(td.glob("*.log"))
-
-        section = [f"### {label}"]
-        section.append(f"- Patches produced: {len(patches)}")
-
-        for tf in test_outputs[:3]:
-            try:
-                content = tf.read_text(errors="replace")[-2000:]
-                speedups = _re.findall(r"speedup[:\s]+([0-9.]+)x?", content, _re.IGNORECASE)
-                durations = _re.findall(r"duration[:\s]+([0-9.]+)\s*(?:us|µs|ms)", content, _re.IGNORECASE)
-                if speedups:
-                    section.append(f"- {tf.name}: speedup = {speedups[-1]}")
-                elif durations:
-                    section.append(f"- {tf.name}: duration = {durations[-1]}")
-                else:
-                    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
-                    tail = lines[-3:] if len(lines) >= 3 else lines
-                    section.append(f"- {tf.name} (tail): {' | '.join(tail)}")
-            except Exception:
-                section.append(f"- {tf.name}: (unreadable)")
-
-        for lf in log_files[:1]:
-            try:
-                content = lf.read_text(errors="replace")[-1000:]
-                if "ERROR" in content or "Traceback" in content:
-                    section.append(f"- Log ({lf.name}): contains errors")
-                else:
-                    section.append(f"- Log ({lf.name}): completed")
-            except Exception:
-                pass
-
-        sections.append("\n".join(section))
-
-    return sections
-
-
-def _scan_previous_results(results_dir: Path) -> str:
-    """Scan previous round results and build a combined summary.
-
-    Accepts either a single round directory (e.g. results/round_1) or
-    the parent results/ directory containing multiple round_N subdirs.
-    Returns a Markdown summary covering ALL prior rounds.
-    """
-    sections: list[str] = []
-
-    round_subdirs = sorted(
-        d for d in results_dir.iterdir()
-        if d.is_dir() and d.name.startswith("round_")
-    ) if results_dir.is_dir() else []
-
-    if round_subdirs:
-        for rd in round_subdirs:
-            round_sections = _scan_single_round_results(rd)
-            if round_sections:
-                sections.append(f"## {rd.name.replace('_', ' ').title()} Results\n")
-                sections.extend(round_sections)
-    else:
-        single_sections = _scan_single_round_results(results_dir)
-        if single_sections:
-            sections.append("## Previous Round Results\n")
-            sections.extend(single_sections)
-
-    if not sections:
-        return ""
-
-    return "\n\n".join(sections) + "\n"
-
-
-def _scan_previous_tasks(tasks_dir: Path, current_round: int) -> str:
-    """Scan prior rounds' task directories and summarize what was planned.
-
-    Reads YAML frontmatter (label, agent_type, priority) and the first
-    ~200 chars of the task body from each .md task file under
-    tasks/round_1 through tasks/round_{current_round - 1}.
-    """
-    import re as _re
-
-    sections: list[str] = []
-    for r in range(1, current_round):
-        round_dir = tasks_dir / f"round_{r}"
-        if not round_dir.is_dir():
-            continue
-        task_files = sorted(round_dir.glob("*.md"))
-        if not task_files:
-            continue
-        round_items: list[str] = []
-        for tf in task_files:
-            try:
-                text = tf.read_text(errors="replace")
-                parts = _re.split(r"^---\s*$", text, maxsplit=2, flags=_re.MULTILINE)
-                if len(parts) >= 3:
-                    import yaml as _yaml
-                    fm = _yaml.safe_load(parts[1]) or {}
-                    body_preview = parts[2].strip()[:200]
-                else:
-                    fm = {}
-                    body_preview = text.strip()[:200]
-                label = fm.get("label", tf.stem)
-                agent_type = fm.get("agent_type", "unknown")
-                priority = fm.get("priority", "?")
-                round_items.append(
-                    f"- **{label}** (agent={agent_type}, priority={priority}): "
-                    f"{body_preview}{'...' if len(body_preview) >= 200 else ''}"
-                )
-            except Exception:
-                round_items.append(f"- {tf.name}: (unreadable)")
-
-        if round_items:
-            sections.append(f"## Round {r} Planned Tasks\n\n" + "\n".join(round_items))
-
-    if not sections:
-        return ""
-
-    return "\n\n".join(sections) + "\n"
-
-
 # ============================================================================
 # CLI
 # ============================================================================
@@ -1347,49 +739,31 @@ def main():
 
     # Output: directory of task files or JSON to stdout
     if args.output:
-        from minisweagent.run.task_file import write_task_file
-
         out_dir = Path(args.output)
-        out_dir.mkdir(parents=True, exist_ok=True)
+        task_paths = write_task_files(
+            tasks,
+            out_dir,
+            kernel_path=str(kernel_path),
+            repo_root=args.repo_root or "",
+            commandment=args.commandment or "",
+            baseline_metrics=args.baseline_metrics or "",
+            profiling=args.profiling or "",
+            codebase_context=args.codebase_context or "",
+            benchmark_baseline=args.benchmark_baseline or "",
+            test_command=test_command or "",
+            round_num=args.round,
+        )
 
-        from minisweagent.agents.agent_spec import _agent_class_to_type
-
-        _AGENT_CLASS_TO_TYPE = _agent_class_to_type()
-
-        manifest = []
-        for i, t in enumerate(tasks):
-            filename = f"{t.priority:02d}_{t.label}.md"
-            task_path = out_dir / filename
-
-            metadata = {
-                "label": t.label,
-                "priority": t.priority,
-                "agent_type": _AGENT_CLASS_TO_TYPE.get(t.agent_class, "strategy_agent"),
-                "kernel_language": t.kernel_language,
-                "kernel_path": str(kernel_path),
-                "repo_root": args.repo_root,
-                "commandment": args.commandment,
-                "baseline_metrics": args.baseline_metrics,
-                "profiling": args.profiling,
-                "codebase_context": args.codebase_context,
-                "benchmark_baseline": args.benchmark_baseline,
-                "num_gpus": t.num_gpus,
-                "test_command": test_command,
-                "round": args.round,
+        manifest = [
+            {
+                "index": i,
+                "label": tasks[i].label,
+                "priority": tasks[i].priority,
+                "kernel_language": tasks[i].kernel_language,
+                "file": str(f),
             }
-
-            body = f"# {t.label}\n\n{t.task}\n"
-            write_task_file(task_path, metadata, body)
-
-            manifest.append(
-                {
-                    "index": i,
-                    "label": t.label,
-                    "priority": t.priority,
-                    "kernel_language": t.kernel_language,
-                    "file": str(task_path),
-                }
-            )
+            for i, f in enumerate(task_paths)
+        ]
 
         print(f"\n[task-generator] Wrote {len(tasks)} task file(s) to {out_dir}/", file=sys.stderr)
         print(json.dumps(manifest, indent=2))

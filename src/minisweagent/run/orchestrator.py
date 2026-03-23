@@ -168,11 +168,12 @@ def main() -> None:
     if baseline_path.exists():
         ctx["baseline_metrics"] = json.loads(baseline_path.read_text())
 
-    harness_results_path = pp_dir / "harness_results.json"
-    if harness_results_path.exists():
-        hr = json.loads(harness_results_path.read_text())
-        ctx["test_command"] = hr.get("test_command")
-        ctx["harness_path"] = hr.get("harness_path")
+    testcase_sel_path = pp_dir / "testcase_selection.json"
+    if testcase_sel_path.exists():
+        ts = json.loads(testcase_sel_path.read_text())
+        if isinstance(ts, dict):
+            ctx.setdefault("test_command", ts.get("test_command"))
+            ctx.setdefault("harness_path", ts.get("harness_path"))
 
     commandment_path = pp_dir / "COMMANDMENT.md"
     if commandment_path.exists():

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from minisweagent.agents.heterogeneous.orchestrator import _group_task_files_by_dispatch_stage, _stage_found_improvement
+from minisweagent.agents.heterogeneous.tools import _group_task_files_by_dispatch_stage, _stage_found_improvement
 from minisweagent.run.task_file import write_task_file
 
 

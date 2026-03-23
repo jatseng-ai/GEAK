@@ -51,7 +51,7 @@ def run_homogeneous_orchestrator(
         else f"--- Orchestrator (homogeneous) starting ({start_label}, {len(gpu_ids)} GPUs) ---"
     )
 
-    ctx: dict[str, Any] = {**preprocess_ctx, "output_dir": str(output_dir)}
+    ctx: dict[str, Any] = {**preprocess_ctx, "output_dir": str(output_dir), "gpu_ids": gpu_ids}
 
     for round_num in range(start_round, max_rounds + 1):
         is_last = round_num == max_rounds
