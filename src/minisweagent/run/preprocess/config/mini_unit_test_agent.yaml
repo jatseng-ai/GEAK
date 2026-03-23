@@ -146,8 +146,11 @@ agent:
 
     GEAK_SHAPES_USED (for determinism validation):
        - In ALL modes, after the loop, print:
-           GEAK_SHAPES_USED=<sorted list of config tuples>
-         Use the EXACT same tuple format as the benchmark file's configs.
+           GEAK_SHAPES_USED=<list of config indices>
+         where each index is the 0-based position in the full config list.
+         Example: GEAK_SHAPES_USED=[0, 3, 7, 12, 24]
+         This avoids repr differences (enums, torch dtypes, string formats).
+         Use the config INDEX, not the config values.
 
     Determinism requirements:
        - The sampled modes are part of the evaluation contract.
