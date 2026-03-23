@@ -9,9 +9,12 @@ language-specific guidance, and extracted test patterns so the agent can make
 informed decisions without re-scanning the repo.
 """
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 from minisweagent import Environment, Model
 from minisweagent.agents.default import AgentConfig, DefaultAgent
@@ -69,19 +72,28 @@ _LANGUAGE_GUIDANCE: dict[str, str] = {
     ),
     "ck": (
         "This is a Composable Kernel (CK) kernel (C++ compiled with hipcc + CK includes).\n"
-        "- A build step is REQUIRED. Needs CK headers and hipcc.\n"
-        "- Template parameters (tile sizes, vector widths) are compile-time; test multiple configs.\n"
-        "- Use host-side validation against a reference GEMM/convolution; use `hipEventElapsedTime` for benchmarking.\n"
-        "- NEVER use `sys.path.insert(0, '/absolute/path/...')`. Rely on PYTHONPATH set by COMMANDMENT SETUP.\n"
+        "CK harnesses use a 5-file architecture:\n"
         "\n"
-        "Standalone build (COMMANDMENT SETUP runs from GEAK_WORK_DIR: build in build/; binary at build/bin/<name>):\n"
-        "- If the worktree has both CMakeLists.txt (CK in-tree stub with add_example_executable) and "
-        "CMakeLists_standalone.txt, SETUP will copy the standalone over CMakeLists.txt and run cmake so the build succeeds.\n"
-        "- Otherwise put a standalone CMake at the worktree root: project(), CMAKE_CXX_COMPILER=hipcc, CK include_directories, "
-        "add_executable(...) for the kernel .cpp. Do NOT rely on CK's add_example_executable (only works inside full CK tree).\n"
-        "- Build dir must be `build/`; binary at `${GEAK_WORK_DIR}/build/bin/<name>`.\n"
-        "- Harness: resolve binary via GEAK_WORK_DIR/build/bin/<name> or build/bin. "
-        "Do not hardcode paths or invoke the build; SETUP builds, harness only runs the binary."
+        "  1. baseline.cpp   — frozen ground truth, compiled to libbaseline.so\n"
+        "  2. optimized.cpp  — LLM edits TUNING PARAMETERS, compiled to liboptimized.so\n"
+        "  3. test_harness.py — Python script that loads both .so via ctypes\n"
+        "  4. compile.py     — auto-detects GPU arch via PyTorch, calls make\n"
+        "  5. Makefile        — hipcc -shared -fPIC -O3 build rules\n"
+        "\n"
+        "Both .cpp files expose a single `extern \"C\" float run_kernel(...)` function.\n"
+        "The Python harness loads each .so with ctypes.CDLL, sets argtypes/restype to\n"
+        "mirror the C ABI, and calls run_kernel with PyTorch tensor data_ptr() values.\n"
+        "\n"
+        "Key rules:\n"
+        "- The harness is Python-based (test_harness.py), NOT a C++ binary.\n"
+        "- Kernels are compiled as standalone .so files — no dependency on CK's build system.\n"
+        "- The COMMANDMENT SETUP section should run: ./compile.py && echo 'Build OK'\n"
+        "- CORRECTNESS: python test_harness.py libbaseline.so liboptimized.so --correctness\n"
+        "- PROFILE:     python test_harness.py libbaseline.so liboptimized.so --profile\n"
+        "- BENCHMARK:   python test_harness.py libbaseline.so liboptimized.so --benchmark\n"
+        "- NEVER use sys.path.insert or importlib.util. Use ctypes.CDLL for kernel loading.\n"
+        "- Use torch.testing.assert_close for correctness validation between baseline and optimized.\n"
+        "- A CK harness recipe (if available) provides the exact file contents to generate."
     ),
     "asm": (
         "This is a precompiled HSACO assembly kernel.\n"
@@ -96,6 +108,65 @@ _LANGUAGE_GUIDANCE: dict[str, str] = {
         "- Apply the appropriate testing strategy based on your analysis."
     ),
 }
+
+_logger = logging.getLogger(__name__)
+
+_RECIPE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "knowledge" / "ck_harness_recipes"
+
+
+def _load_ck_recipe(kernel_info) -> str:
+    """Load the CK harness recipe matching the kernel's device type.
+
+    Reads ``_index.yaml`` for the device-type-to-recipe mapping, scans the
+    kernel source for known device type class names, and returns the matching
+    recipe markdown content.  Falls back to ``default_recipe`` when no device
+    type is matched.
+    """
+    index_path = _RECIPE_DIR / "_index.yaml"
+    if not index_path.exists():
+        _logger.debug("CK recipe index not found at %s", index_path)
+        return ""
+
+    try:
+        with open(index_path) as f:
+            index = yaml.safe_load(f)
+    except Exception:
+        _logger.warning("Failed to parse CK recipe index", exc_info=True)
+        return ""
+
+    device_type_map: dict[str, str] = index.get("device_type_map", {})
+    default_recipe: str = index.get("default_recipe", "")
+
+    recipe_file = default_recipe
+    source_text = ""
+
+    file_path = getattr(kernel_info, "file_path", None)
+    if file_path:
+        try:
+            source_text = Path(file_path).read_text(errors="replace")
+        except Exception:
+            _logger.debug("Could not read kernel source at %s", file_path)
+
+    if source_text:
+        for device_type, recipe_name in device_type_map.items():
+            if re.search(rf"\b{re.escape(device_type)}\b", source_text):
+                recipe_file = recipe_name
+                _logger.info("Matched CK device type '%s' -> recipe '%s'", device_type, recipe_name)
+                break
+
+    if not recipe_file:
+        return ""
+
+    recipe_path = _RECIPE_DIR / recipe_file
+    if not recipe_path.exists():
+        _logger.warning("CK recipe file not found: %s", recipe_path)
+        return ""
+
+    try:
+        return recipe_path.read_text()
+    except Exception:
+        _logger.warning("Failed to read CK recipe %s", recipe_path, exc_info=True)
+        return ""
 
 
 def format_discovery_for_agent(result) -> str:
@@ -138,6 +209,18 @@ def format_discovery_for_agent(result) -> str:
             lines.append("## Language-Specific Testing Guidance")
             lines.append(guidance)
             lines.append("")
+
+        # CK harness recipe injection
+        if k.kernel_type == "ck":
+            recipe = _load_ck_recipe(k)
+            if recipe:
+                lines.append("## CK Harness Recipe")
+                lines.append("")
+                lines.append("Use the following recipe as a template to generate the 5-file harness.")
+                lines.append("Adapt the C ABI, ctypes argtypes, and shape lists as needed for this kernel.")
+                lines.append("")
+                lines.append(recipe)
+                lines.append("")
 
     # --- Discovered tests ---
     if result.tests:

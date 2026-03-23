@@ -1,0 +1,21 @@
+# CK Harness Recipe Index
+# Maps CK device type class names (regex-matched from kernel source) to recipe files.
+
+device_type_map:
+  DeviceSoftmaxImpl: softmax.md
+  DeviceGemmXdl: gemm.md
+  DeviceGemm_Xdl_CShuffle: gemm.md
+  DeviceGemmXdl_CShuffle: gemm.md
+  DeviceNormalizationFwdImpl: normalization.md
+  DeviceNormalizationBwdImpl: normalization.md
+  DeviceBatchNormFwdImpl: normalization.md
+  DeviceBatchNormBwdImpl: normalization.md
+  DeviceReduceMultiBlock: reduce.md
+  # Future families:
+  # DevicePool2dFwd_NHWC_NHWC: pooling.md
+  # DevicePool3dFwd_NDHWC_NDHWC: pooling.md
+  # DeviceConvNdFwdImpl: convolution.md
+  # DeviceElementwise: elementwise.md
+  # DeviceContractionMultipleD: contraction.md
+
+default_recipe: softmax.md
