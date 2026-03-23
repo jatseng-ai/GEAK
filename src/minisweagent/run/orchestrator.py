@@ -152,7 +152,16 @@ def main() -> None:
     if resolved_path.exists():
         resolved = json.loads(resolved_path.read_text())
         ctx["kernel_path"] = resolved.get("local_file_path")
-        ctx["repo_root"] = resolved.get("repo_root") or str(pp_dir)
+        kernel_file = resolved.get("local_file_path", "")
+        repo_path = resolved.get("local_repo_path")
+        if kernel_file:
+            from minisweagent.run.preprocess.resolve_kernel_url import _find_git_root
+            git_root = _find_git_root(Path(kernel_file))
+            if git_root:
+                repo_path = str(git_root)
+            elif not repo_path:
+                repo_path = str(Path(kernel_file).parent)
+        ctx["repo_root"] = repo_path or str(pp_dir)
     else:
         ctx["repo_root"] = str(pp_dir)
 

@@ -37,11 +37,17 @@ def tool_generate_tasks(
 
     taskgen_model = ctx["model_factory"]() if ctx.get("model_factory") else ctx["model"]
 
+    kernel_meta = ctx.get("kernel_meta") or {}
     kwargs: dict[str, Any] = {
-        "discovery_result": ctx["discovery_result"],
         "base_task_context": "",
         "agent_class": ctx["agent_class"],
         "model": taskgen_model,
+        "kernel_path": kernel_meta.get("kernel_path", str(ctx.get("kernel_path", ""))),
+        "kernel_name": kernel_meta.get("kernel_name", ""),
+        "kernel_type": kernel_meta.get("kernel_type", "unknown"),
+        "kernel_language": kernel_meta.get("kernel_language", "python"),
+        "function_names": kernel_meta.get("function_names", []),
+        "workspace_path": kernel_meta.get("workspace_path", str(ctx.get("repo_root", ""))),
         "num_gpus": len(ctx.get("gpu_ids", [0])),
     }
 
@@ -115,6 +121,7 @@ def tool_generate_tasks(
         benchmark_baseline=str(pp_dir / "benchmark_baseline.txt") if (pp_dir / "benchmark_baseline.txt").exists() else "",
         test_command=str(ctx.get("test_command", "")),
         starting_patch=str(ctx.get("starting_patch", "")),
+        harness_path=str(ctx.get("harness_path", "")),
         round_num=round_num,
     )
 

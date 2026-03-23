@@ -46,6 +46,18 @@ def is_weblink(s: str) -> bool:
     return s.startswith("http://") or s.startswith("https://")
 
 
+def _find_git_root(path: Path) -> Path | None:
+    """Walk up from *path* to find the nearest directory containing ``.git``."""
+    current = path.resolve()
+    if current.is_file():
+        current = current.parent
+    while current != current.parent:
+        if (current / ".git").exists():
+            return current
+        current = current.parent
+    return None
+
+
 def _parse_fragment(spec: str) -> tuple[int | None, int | None]:
     """Parse #L106 or #L106-L108 from spec. Returns (line_start, line_end) or (None, None)."""
     if "#" not in spec:
@@ -425,7 +437,11 @@ def resolve_kernel_url(
         out["error"] = f"Kernel file not found: {kernel_path}"
         return out
 
-    out["local_repo_path"] = str(base) if repo else None
+    if repo:
+        out["local_repo_path"] = str(base)
+    else:
+        git_root = _find_git_root(kernel_path)
+        out["local_repo_path"] = str(git_root) if git_root else None
     out["local_file_path"] = str(kernel_path)
     out["line_number"] = line_start
     out["line_end"] = line_end

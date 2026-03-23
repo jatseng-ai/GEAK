@@ -14,10 +14,12 @@ Priority scheme (lower = higher priority, runs first):
 Usage (Python):
     from minisweagent.agents.heterogeneous.task_generator import generate_tasks
     tasks = generate_tasks(
-        discovery_result=result,
         base_task_context=task_text,
         agent_class=StrategyAgent,
         model=model,
+        kernel_path="/path/to/kernel.py",
+        kernel_name="my_kernel",
+        kernel_type="triton",
         profiling_path=Path("profile.json"),
         commandment_path=Path("COMMANDMENT.md"),
     )
@@ -35,15 +37,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import tempfile
-import textwrap
 from pathlib import Path
 from typing import Any
 
 from minisweagent.agents.agent_spec import AgentTask
 from minisweagent.debug_runtime import emit_debug_log, model_tools_snapshot, tool_names
-from minisweagent.run.preprocess.discovery_types import DiscoveryResult
 from minisweagent.agents.heterogeneous.prompts import (
     GPU_AND_PROFILER_RULES as _GPU_AND_PROFILER_RULES,
     TASKGEN_SYSTEM_PROMPT as _SYSTEM_PROMPT,
@@ -62,16 +61,70 @@ _KNOWLEDGE_BASE_REL = "knowledge_base/optimization_strategies.py"
 
 
 # ============================================================================
+# Kernel metadata extraction
+# ============================================================================
+
+
+def _infer_kernel_type(kernel_path: Path) -> str:
+    """Infer kernel_type from file content/extension when discovery.json is absent."""
+    ext = kernel_path.suffix.lower()
+    if ext == ".py":
+        try:
+            text = kernel_path.read_text(errors="ignore")[:4096]
+            if "import triton" in text or "@triton" in text:
+                return "triton"
+        except OSError:
+            pass
+        return "unknown"
+    if ext in (".cu", ".hip", ".hpp", ".cpp"):
+        path_lower = str(kernel_path).lower()
+        if "composable_kernel" in path_lower or "/ck_" in path_lower or "/ck/" in path_lower:
+            return "ck"
+        return "hip"
+    return "unknown"
+
+
+def _extract_kernel_meta(
+    discovery: dict | None,
+    kernel_path: str,
+) -> dict[str, Any]:
+    """Build flat kernel metadata from a discovery.json dict and kernel path.
+
+    When discovery.json is available, reads kernel_type from it directly.
+    When absent, infers kernel_type from file extension and content.
+    Other fields use simple defaults -- the LLM reads CODEBASE_CONTEXT.md
+    for the full dependency tree, function names, and import relationships.
+    """
+    kp = Path(kernel_path) if kernel_path else Path("unknown.py")
+    kernel_info = (discovery or {}).get("kernel") or {}
+    ktype = kernel_info.get("type") or _infer_kernel_type(kp)
+    from minisweagent.run.preprocess.discovery_types import _infer_kernel_language
+    return {
+        "kernel_path": str(kp),
+        "kernel_name": kernel_info.get("name", kp.stem),
+        "kernel_type": ktype,
+        "kernel_language": _infer_kernel_language(kp, ktype),
+        "function_names": kernel_info.get("functions", []),
+        "workspace_path": (discovery or {}).get("workspace", str(kp.parent)),
+    }
+
+
+# ============================================================================
 # Public API
 # ============================================================================
 
 
 def generate_tasks(
-    discovery_result: DiscoveryResult,
     base_task_context: str,
     agent_class: type,
     model: Any,
     *,
+    kernel_path: str = "",
+    kernel_name: str = "",
+    kernel_type: str = "unknown",
+    kernel_language: str = "python",
+    function_names: list[str] | None = None,
+    workspace_path: str = "",
     profiling_path: Path | None = None,
     commandment_path: Path | None = None,
     baseline_metrics_path: Path | None = None,
@@ -87,10 +140,15 @@ def generate_tasks(
     """Generate optimization tasks using an LLM planning agent.
 
     Args:
-        discovery_result: Output of DiscoveryPipeline.run().
         base_task_context: Common context prepended to each task prompt.
         agent_class: Default agent class for tasks (typically StrategyAgent).
         model: LLM model instance (required).
+        kernel_path: Absolute path to the kernel file.
+        kernel_name: Human-readable kernel name.
+        kernel_type: Backend type (triton, hip, cuda, ck, asm, unknown).
+        kernel_language: Source language (python, cpp, asm).
+        function_names: Key function names within the kernel file.
+        workspace_path: Working directory for the planning agent.
         profiling_path: Path to kernel-profile JSON output.
         commandment_path: Path to COMMANDMENT.md.
         baseline_metrics_path: Path to baseline_metrics.json.
@@ -108,11 +166,16 @@ def generate_tasks(
     Raises:
         RuntimeError: If the agent fails to submit results.
     """
-    if not discovery_result.kernels:
+    if not kernel_path:
         return []
 
     submitted_text = _run_task_agent(
-        discovery_result=discovery_result,
+        kernel_path=kernel_path,
+        kernel_name=kernel_name,
+        kernel_type=kernel_type,
+        kernel_language=kernel_language,
+        function_names=function_names or [],
+        workspace_path=workspace_path,
         base_task_context=base_task_context,
         model=model,
         profiling_path=profiling_path,
@@ -128,22 +191,26 @@ def generate_tasks(
         num_gpus=num_gpus,
     )
 
-    kernel = discovery_result.kernels[0]
     return _parse_llm_response(
         submitted_text,
         agent_class,
-        kernel_path=str(kernel.file_path),
+        kernel_path=kernel_path,
         commandment_path=str(commandment_path) if commandment_path else None,
         baseline_metrics_path=str(baseline_metrics_path) if baseline_metrics_path else None,
     )
 
 
 def generate_tasks_from_content(
-    discovery_result: DiscoveryResult,
     base_task_context: str,
     agent_class: type,
     model: Any,
     *,
+    kernel_path: str = "",
+    kernel_name: str = "",
+    kernel_type: str = "unknown",
+    kernel_language: str = "python",
+    function_names: list[str] | None = None,
+    workspace_path: str = "",
     profiling_result: dict | None = None,
     commandment_content: str | None = None,
     baseline_metrics: dict | None = None,
@@ -183,10 +250,15 @@ def generate_tasks_from_content(
             tmp_files.append(deep_search_path)
 
         return generate_tasks(
-            discovery_result=discovery_result,
             base_task_context=base_task_context,
             agent_class=agent_class,
             model=model,
+            kernel_path=kernel_path,
+            kernel_name=kernel_name,
+            kernel_type=kernel_type,
+            kernel_language=kernel_language,
+            function_names=function_names,
+            workspace_path=workspace_path,
             profiling_path=profiling_path,
             commandment_path=commandment_path,
             baseline_metrics_path=baseline_metrics_path,
@@ -220,6 +292,7 @@ def write_task_files(
     benchmark_baseline: str = "",
     test_command: str = "",
     starting_patch: str = "",
+    harness_path: str = "",
     round_num: int = 1,
 ) -> list[Path]:
     """Write AgentTask objects to .md task files on disk.
@@ -250,6 +323,7 @@ def write_task_files(
             "codebase_context": codebase_context,
             "benchmark_baseline": benchmark_baseline,
             "starting_patch": starting_patch,
+            "harness_path": harness_path,
             "num_gpus": t.num_gpus,
             "test_command": test_command,
             "round": round_num,
@@ -284,7 +358,13 @@ def _find_knowledge_base(workspace: Path) -> Path | None:
 
 
 def _run_task_agent(
-    discovery_result: DiscoveryResult,
+    *,
+    kernel_path: str,
+    kernel_name: str,
+    kernel_type: str,
+    kernel_language: str,
+    function_names: list[str],
+    workspace_path: str,
     base_task_context: str,
     model: Any,
     profiling_path: Path | None,
@@ -304,8 +384,7 @@ def _run_task_agent(
     from minisweagent.environments.local import LocalEnvironment
     from minisweagent.tools.tools_runtime import get_tools_list
 
-    kernel = discovery_result.kernels[0]
-    workspace = discovery_result.workspace_path or kernel.file_path.parent
+    workspace = Path(workspace_path) if workspace_path else Path(kernel_path).parent
 
     read_only_tools = [t for t in get_tools_list() if t["name"] in ("str_replace_editor", "submit")]
     # AmdLlmModel forwards set_tools() to its _impl; snapshot the actual target.
@@ -374,14 +453,11 @@ def _run_task_agent(
             tmp_files.append(round_evals_path)
 
         template_vars = {
-            "kernel_path": str(kernel.file_path),
-            "kernel_name": kernel.kernel_name,
-            "kernel_type": kernel.kernel_type,
-            "kernel_language": kernel.kernel_language,
-            "inner_kernel_path": str(kernel.inner_kernel_path) if kernel.inner_kernel_path else "",
-            "inner_kernel_language": kernel.inner_kernel_language or "",
-            "has_autotune": kernel.has_autotune,
-            "function_names": ", ".join(kernel.function_names) if kernel.function_names else "",
+            "kernel_path": kernel_path,
+            "kernel_name": kernel_name,
+            "kernel_type": kernel_type,
+            "kernel_language": kernel_language,
+            "function_names": ", ".join(function_names) if function_names else "",
             "codebase_context_path": str(codebase_context_path) if codebase_context_path else "",
             "discovery_path": str(discovery_path) if discovery_path else "",
             "profiling_path": str(profiling_path) if profiling_path else "",
@@ -411,7 +487,7 @@ def _run_task_agent(
                 _notebook_dir = Path(previous_results_dir).resolve().parent.parent / "_working_memory"
             _wm_ctx = summarize_working_notebook(_notebook_dir)
             _mem = assemble_memory_context(
-                kernel_path=str(kernel.file_path),
+                kernel_path=kernel_path,
                 bottleneck_type=_bm_dict.get("bottleneck"),
                 profiling_metrics=_bm_dict,
             )
@@ -425,7 +501,12 @@ def _run_task_agent(
         except Exception:
             pass
 
-        template_vars["workload_guidance"] = _build_workload_guidance(kernel, _bm_dict)
+        _kernel_meta = {
+            "file_path": kernel_path,
+            "kernel_name": kernel_name,
+            "kernel_type": kernel_type,
+        }
+        template_vars["workload_guidance"] = _build_workload_guidance(_kernel_meta, _bm_dict)
 
         tg_step_limit = int(os.getenv("GEAK_TASKGEN_STEP_LIMIT", "200"))
         tg_cost_limit = float(os.getenv("GEAK_TASKGEN_COST_LIMIT", "50.0"))
@@ -681,10 +762,10 @@ def main():
     else:
         print(f"[task-generator] Loading discovery from {args.from_discovery}...", file=sys.stderr)
 
-    discovery_result = DiscoveryResult.from_dict(disc_json, kernel_path)
+    kernel_meta = _extract_kernel_meta(disc_json, str(kernel_path))
 
-    if not discovery_result.kernels:
-        print("ERROR: no kernels found by discovery", file=sys.stderr)
+    if not kernel_meta["kernel_path"] or kernel_meta["kernel_path"] == "unknown.py":
+        print("ERROR: no kernel found in discovery", file=sys.stderr)
         sys.exit(1)
 
     # Create model (REQUIRED)
@@ -718,10 +799,15 @@ def main():
 
     # Generate tasks
     tasks = generate_tasks(
-        discovery_result=discovery_result,
         base_task_context=base_task_context,
         agent_class=agent_class,
         model=model,
+        kernel_path=kernel_meta["kernel_path"],
+        kernel_name=kernel_meta["kernel_name"],
+        kernel_type=kernel_meta["kernel_type"],
+        kernel_language=kernel_meta["kernel_language"],
+        function_names=kernel_meta["function_names"],
+        workspace_path=kernel_meta["workspace_path"],
         profiling_path=profiling_path,
         commandment_path=commandment_path,
         baseline_metrics_path=baseline_metrics_path,
