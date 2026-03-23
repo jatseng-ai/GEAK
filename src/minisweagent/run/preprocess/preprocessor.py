@@ -39,7 +39,6 @@ def _ensure_mcp_importable() -> None:
             sys.path.insert(0, p)
 
 
-from minisweagent.run.postprocess.benchmark_parsing import extract_latency_ms
 from minisweagent.run.pipeline_helpers import (
     DEFAULT_EVAL_BENCHMARK_ITERATIONS,
     DEFAULT_PIPELINE_OUTPUT_DIR,
@@ -50,6 +49,7 @@ from minisweagent.run.pipeline_helpers import (
     run_baseline_profile,
     validate_harness,
 )
+from minisweagent.run.postprocess.benchmark_parsing import extract_latency_ms
 from minisweagent.run.preprocess.testcase_cache import (
     build_testcase_cache_key,
     get_testcase_cache_dir,
@@ -1002,6 +1002,25 @@ def run_preprocessor(
 
     _print("")
     _print("Preprocessing complete. Artefacts written to: " + str(output_dir))
+
+    from minisweagent.run.pipeline_types import PreprocessContext
+
+    preprocess_context = PreprocessContext(
+        kernel_path=ctx.get("kernel_path", ""),
+        repo_root=ctx.get("repo_root", ""),
+        harness_path=ctx.get("harness_path", ""),
+        preprocess_dir=str(output_dir),
+        commandment_path=str(output_dir / "COMMANDMENT.md") if (output_dir / "COMMANDMENT.md").exists() else "",
+        codebase_context_path=ctx.get("codebase_context_path", ""),
+        baseline_metrics_path=str(output_dir / "baseline_metrics.json") if (output_dir / "baseline_metrics.json").exists() else "",
+        profiling_result_path=str(output_dir / "profile.json") if (output_dir / "profile.json").exists() else "",
+        discovery=ctx.get("discovery"),
+    )
+    (output_dir / "preprocess_context.json").write_text(
+        json.dumps(preprocess_context.to_dict(), indent=2, default=str)
+    )
+
+    ctx["_preprocess_context"] = preprocess_context
     return ctx
 
 

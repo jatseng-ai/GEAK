@@ -236,7 +236,7 @@ def tool_dispatch_tasks(
             "result": stage_result if isinstance(stage_result, dict) else str(stage_result),
         })
         if _stage_found_improvement(results_base, stage_tasks):
-            for remaining_stage, remaining_tasks in stages:
+            for remaining_stage, _remaining_tasks in stages:
                 if remaining_stage == stage_name:
                     continue
                 if _dispatch_stage_name(0) == remaining_stage:
@@ -287,41 +287,13 @@ def tool_finalize(
     total_speedup: str | None = None,
     **_extra,
 ) -> str:
-    """Signal optimisation is complete.  Write final report.
+    """Signal optimisation is complete.  Write the LLM's final report.
 
-    If best_patch or total_speedup are not provided, attempts to auto-detect
-    them from the results directory.
+    The actual best-patch selection and FULL_BENCHMARK verification is
+    done by ``post_round_evaluate`` + ``finalize_run`` in the orchestrator
+    after this tool returns.  This tool just records the LLM's summary.
     """
     output_dir = Path(ctx["output_dir"])
-
-    if best_patch is None or total_speedup is None:
-        best_speedup_val = 0.0
-        best_patch_file = None
-
-        results_dir = output_dir / "results"
-        if results_dir.is_dir():
-            for round_dir in sorted(results_dir.iterdir()):
-                if not round_dir.is_dir() or not round_dir.name.startswith("round_"):
-                    continue
-                for task_dir in sorted(round_dir.iterdir()):
-                    if not task_dir.is_dir() or task_dir.name == "worktrees":
-                        continue
-                    br_file = task_dir / "best_results.json"
-                    if br_file.exists():
-                        try:
-                            br = json.loads(br_file.read_text())
-                            speedup = float(br.get("best_patch_speedup", 0))
-                            if speedup > best_speedup_val:
-                                best_speedup_val = speedup
-                                best_patch_file = br.get("best_patch_file")
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            continue
-
-        if best_patch is None and best_patch_file:
-            best_patch = best_patch_file
-        if total_speedup is None and best_speedup_val > 0:
-            total_speedup = f"{best_speedup_val:.4f}x"
-
     report = {
         "status": "complete",
         "summary": summary,

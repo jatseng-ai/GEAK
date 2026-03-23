@@ -8,7 +8,6 @@ stopping kicks in when a round fails to improve over prior best.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -34,8 +33,7 @@ def run_homogeneous_orchestrator(
     task.  Per-round evaluation and early stopping are reused from the
     shared postprocess modules.
     """
-    from minisweagent.run.postprocess.evaluation import evaluate_round_best
-    from minisweagent.run.postprocess.results import auto_finalize
+    from minisweagent.run.postprocess.results import finalize_run, post_round_evaluate
     from minisweagent.run.task_file import write_task_file
 
     pp_dir = output_dir
@@ -113,34 +111,28 @@ def run_homogeneous_orchestrator(
         except Exception as exc:
             _print(f"  [yellow]Round {round_num} dispatch failed: {exc}[/yellow]")
 
-        round_eval = evaluate_round_best(
-            ctx, round_num, results_dir, _print,
-        )
-        if round_eval:
-            ctx[f"round_{round_num}_eval"] = round_eval
-            if round_eval.get("best_patch"):
-                current_speedup_val = (
-                    round_eval.get("full_benchmark", {}).get("verified_speedup")
-                    or round_eval.get("benchmark_speedup", 0)
-                )
-                best_global_speedup = ctx.get("_best_global_speedup", 0)
-                if current_speedup_val >= best_global_speedup:
-                    starting_patch = round_eval["best_patch"]
-                    ctx["starting_patch"] = starting_patch
-                    ctx["_best_global_speedup"] = current_speedup_val
+        round_eval = post_round_evaluate(ctx, round_num, output_dir, _print)
+        starting_patch = ctx.get("starting_patch")
 
         early_stop_threshold = float(os.getenv("GEAK_EARLY_STOP_THRESHOLD", "0.005"))
         if round_eval and round_num >= 2:
+            _fb = round_eval.full_benchmark if hasattr(round_eval, "full_benchmark") else None
             current_speedup = (
-                round_eval.get("full_benchmark", {}).get("verified_speedup")
-                or round_eval.get("benchmark_speedup", 1.0)
+                (_fb.verified_speedup if _fb and _fb.verified_speedup is not None else None)
+                or round_eval.benchmark_speedup
+                if hasattr(round_eval, "benchmark_speedup")
+                else 1.0
             )
             prior_speedups = []
             for r in range(1, round_num):
-                rev = ctx.get(f"round_{r}_eval", {})
+                rev = ctx.get(f"round_{r}_eval")
+                if rev is None:
+                    prior_speedups.append(1.0)
+                    continue
+                _pfb = rev.full_benchmark if hasattr(rev, "full_benchmark") else None
                 s = (
-                    rev.get("full_benchmark", {}).get("verified_speedup")
-                    or rev.get("benchmark_speedup", 1.0)
+                    (_pfb.verified_speedup if _pfb and _pfb.verified_speedup is not None else None)
+                    or (rev.benchmark_speedup if hasattr(rev, "benchmark_speedup") else 1.0)
                 )
                 prior_speedups.append(s)
             best_prior = max(prior_speedups) if prior_speedups else 1.0
@@ -151,4 +143,4 @@ def run_homogeneous_orchestrator(
                 )
                 break
 
-    return auto_finalize(ctx, _print)
+    return finalize_run(ctx, output_dir, _print)

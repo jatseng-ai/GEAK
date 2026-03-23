@@ -69,7 +69,7 @@ def round_eval_candidate_ms(round_eval: dict[str, Any]) -> float | None:
     return None
 
 
-def select_best_verified_round_evaluation(output_dir: Path) -> dict[str, Any] | None:
+def select_best_verified_round_evaluation(output_dir: Path) -> Any:
     """Pick the best verified round deterministically from ``round_*_evaluation.json``.
 
     Selection order:
@@ -271,6 +271,93 @@ def merge_round_evaluation_into_final_report(
     final_report_path.write_text(json.dumps(merged, indent=2, default=str))
     record_final_outcome(ctx, merged)
     return merged
+
+
+def post_round_evaluate(
+    ctx: dict[str, Any],
+    round_num: int,
+    output_dir: Path,
+    _print,
+) -> Any:
+    """Run post-round evaluation and update ctx with best-patch tracking.
+
+    Shared by both homogeneous and heterogeneous orchestrators.  After
+    each round completes:
+
+    1. Calls ``evaluate_round_best`` to run FULL_BENCHMARK + PROFILE on
+       the best candidate from this round.
+    2. Stores the result in ``ctx[f"round_{round_num}_eval"]``.
+    3. Updates ``ctx["starting_patch"]`` and ``ctx["_best_global_speedup"]``
+       if this round produced the best result so far.
+
+    Returns a ``RoundEvaluation``, or ``None`` if no candidates existed.
+    """
+    from minisweagent.run.postprocess.evaluation import evaluate_round_best
+
+    results_dir = output_dir / "results" / f"round_{round_num}"
+    round_eval = evaluate_round_best(ctx, round_num, results_dir, _print)
+    if round_eval is None:
+        return None
+
+    ctx[f"round_{round_num}_eval"] = round_eval
+    if round_eval.best_patch:
+        fb = round_eval.full_benchmark
+        current = (
+            (fb.verified_speedup if fb and fb.verified_speedup is not None else None)
+            or round_eval.benchmark_speedup
+        )
+        if current >= ctx.get("_best_global_speedup", 0):
+            ctx["starting_patch"] = round_eval.best_patch
+            ctx["_best_global_speedup"] = current
+    return round_eval
+
+
+def _dict_to_final_report(d: dict[str, Any]) -> Any:
+    """Convert an internal report dict to a FinalReport at the boundary."""
+    from minisweagent.run.pipeline_types import FinalReport
+
+    verified_raw = d.get("verified_speedup_raw", d.get("verified_speedup"))
+    best_speedup = d.get("best_speedup")
+    if best_speedup is None:
+        best_speedup = parse_reported_speedup(d.get("total_speedup"))
+    return FinalReport(
+        status=str(d.get("status", "complete")),
+        summary=str(d.get("summary", "")),
+        best_patch=d.get("best_patch"),
+        best_round=d.get("best_round"),
+        best_task=d.get("best_task"),
+        best_speedup=float(best_speedup) if best_speedup is not None else None,
+        verified_speedup_unclamped=float(verified_raw) if verified_raw is not None else None,
+    )
+
+
+def finalize_run(
+    ctx: dict[str, Any],
+    output_dir: Path,
+    _print,
+    *,
+    finalize_result: dict[str, Any] | None = None,
+    round_eval: Any = None,
+) -> Any:
+    """Finalize the optimization run.
+
+    Shared by both orchestrator modes.  Returns a ``FinalReport``.
+
+    If *finalize_result* is provided (the LLM explicitly called the
+    finalize tool), merges it with *round_eval* for verified data.
+    Otherwise auto-finalizes by scanning all rounds for the best result.
+    """
+    if finalize_result is not None:
+        if round_eval is not None:
+            round_eval_dict = round_eval.to_dict() if hasattr(round_eval, "to_dict") else round_eval
+            merged = merge_round_evaluation_into_final_report(
+                ctx, output_dir, finalize_result, round_eval_dict,
+            )
+            return _dict_to_final_report(merged)
+        record_final_outcome(ctx, finalize_result)
+        return _dict_to_final_report(finalize_result)
+    report_dict = auto_finalize(ctx, _print)
+    return _dict_to_final_report(report_dict)
 
 
 def auto_finalize(

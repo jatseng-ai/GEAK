@@ -21,11 +21,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from minisweagent.debug_runtime import emit_debug_log, model_tools_snapshot
-
 from minisweagent.agents.heterogeneous.prompts import INSTANCE_TEMPLATE, SYSTEM_PROMPT
 from minisweagent.agents.heterogeneous.schemas import build_tools_schema
 from minisweagent.agents.heterogeneous.tools import dispatch_tool_call
+from minisweagent.debug_runtime import emit_debug_log, model_tools_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -180,13 +179,11 @@ def run_heterogeneous_orchestrator(
     This is the main heterogeneous entry point, called by
     ``run/orchestrator.py:run_orchestrator`` when ``heterogeneous=True``.
     """
-    from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
     from minisweagent.agents.heterogeneous.task_generator import _extract_kernel_meta
-    from minisweagent.run.postprocess.evaluation import evaluate_round_best as _evaluate_round_best
+    from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
     from minisweagent.run.postprocess.results import (
-        auto_finalize,
-        merge_round_evaluation_into_final_report,
-        record_final_outcome,
+        finalize_run,
+        post_round_evaluate,
     )
     from minisweagent.tools.tools_runtime import ToolRuntime
 
@@ -372,15 +369,15 @@ def run_heterogeneous_orchestrator(
                 phase=f"round_{round_num}",
             )
 
-            round_results_dir = output_dir / "results" / f"round_{round_num}"
-            round_eval = _evaluate_round_best(
-                ctx, round_num, round_results_dir, _print,
-            )
+            round_eval = post_round_evaluate(ctx, round_num, output_dir, _print)
             if round_eval:
-                ctx[f"round_{round_num}_eval"] = round_eval
                 if _working_mem:
-                    _working_mem.record_round_evaluation(round_eval)
-                eval_summary = json.dumps(round_eval, indent=2, default=str)[:2000]
+                    round_eval_dict = round_eval.to_dict() if hasattr(round_eval, "to_dict") else round_eval
+                    _working_mem.record_round_evaluation(round_eval_dict)
+                eval_summary = json.dumps(
+                    round_eval.to_dict() if hasattr(round_eval, "to_dict") else round_eval,
+                    indent=2, default=str,
+                )[:2000]
                 messages.append({
                     "role": "user",
                     "content": (
@@ -392,24 +389,12 @@ def run_heterogeneous_orchestrator(
                         "task-local speedups only as supporting evidence."
                     ),
                 })
-            if round_eval and round_eval.get("best_patch"):
-                current_speedup_val = (
-                    round_eval.get("full_benchmark", {}).get("verified_speedup")
-                    or round_eval.get("benchmark_speedup", 0)
-                )
-                best_global_speedup = ctx.get("_best_global_speedup", 0)
-                if current_speedup_val >= best_global_speedup:
-                    ctx["starting_patch"] = round_eval["best_patch"]
-                    ctx["_best_global_speedup"] = current_speedup_val
 
             if finalize_result is not None:
-                if round_eval:
-                    finalize_result = merge_round_evaluation_into_final_report(
-                        ctx, output_dir, finalize_result, round_eval,
-                    )
-                else:
-                    record_final_outcome(ctx, finalize_result)
-                return finalize_result
+                return finalize_run(
+                    ctx, output_dir, _print,
+                    finalize_result=finalize_result, round_eval=round_eval,
+                )
     finally:
         if original_tools is not None:
             model_impl.tools = original_tools
@@ -422,4 +407,4 @@ def run_heterogeneous_orchestrator(
         else "Orchestrator completed all rounds without calling finalize – auto-selecting best result..."
     )
 
-    return auto_finalize(ctx, _print)
+    return finalize_run(ctx, output_dir, _print)

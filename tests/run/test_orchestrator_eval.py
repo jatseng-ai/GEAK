@@ -11,10 +11,15 @@ import pytest
 
 from minisweagent.run.orchestrator import run_orchestrator
 from minisweagent.run.postprocess.benchmark_parsing import parse_total_kernel_time_ms as _parse_total_kernel_time_ms
-from minisweagent.run.postprocess.evaluation import setup_eval_worktree as _setup_eval_worktree, evaluate_round_best as _evaluate_round_best
+from minisweagent.run.postprocess.evaluation import evaluate_round_best as _evaluate_round_best
+from minisweagent.run.postprocess.evaluation import setup_eval_worktree as _setup_eval_worktree
 from minisweagent.run.postprocess.results import (
     auto_finalize as _auto_finalize,
+)
+from minisweagent.run.postprocess.results import (
     merge_round_evaluation_into_final_report as _merge_round_evaluation_into_final_report,
+)
+from minisweagent.run.postprocess.results import (
     parse_reported_speedup as _parse_reported_speedup,
 )
 
@@ -167,7 +172,7 @@ class TestEvaluateRoundBestSelection:
         result = _evaluate_round_best(ctx, 1, results_dir, messages.append)
 
         assert result is not None
-        assert result["best_task"] == "agent-low-time"
+        assert result.best_task == "agent-low-time"
         assert any("kernel_time" in m for m in messages), (
             f"Expected 'kernel_time' selection method in output, got: {messages}"
         )
@@ -192,7 +197,7 @@ class TestEvaluateRoundBestSelection:
         result = _evaluate_round_best(ctx, 1, results_dir, messages.append)
 
         assert result is not None
-        assert result["best_task"] == "agent-high-speedup"
+        assert result.best_task == "agent-high-speedup"
 
     def test_mixed_availability_falls_back_to_speedup(self, tmp_path):
         """If only some candidates have kernel times, fall back to speedup."""
@@ -214,7 +219,7 @@ class TestEvaluateRoundBestSelection:
         result = _evaluate_round_best(ctx, 1, results_dir, messages.append)
 
         assert result is not None
-        assert result["best_task"] == "agent-a"
+        assert result.best_task == "agent-a"
 
     def test_no_candidates_returns_none(self, tmp_path):
         output_dir = tmp_path / "out"
@@ -249,7 +254,7 @@ class TestEvaluateRoundBestSelection:
 
         result = _evaluate_round_best(ctx, 1, results_dir, lambda m: None)
         assert result is not None
-        assert result["best_task"] == "real-agent"
+        assert result.best_task == "real-agent"
 
 
 class TestFinalReportVerification:

@@ -91,6 +91,59 @@ def run_orchestrator(
 # ── CLI entry point ──────────────────────────────────────────────────
 
 
+def _probe_preprocess_dir(pp_dir: Path):
+    """Backward-compatible fallback: reconstruct PreprocessContext by probing files."""
+    from minisweagent.run.pipeline_types import PreprocessContext
+
+    kernel_path = ""
+    repo_root = str(pp_dir)
+    harness_path = ""
+
+    resolved_path = pp_dir / "resolved.json"
+    if resolved_path.exists():
+        resolved = json.loads(resolved_path.read_text())
+        kernel_path = resolved.get("local_file_path", "")
+        repo_path = resolved.get("local_repo_path")
+        if kernel_path:
+            from minisweagent.run.preprocess.resolve_kernel_url import _find_git_root
+            git_root = _find_git_root(Path(kernel_path))
+            if git_root:
+                repo_root = str(git_root)
+            elif repo_path:
+                repo_root = repo_path
+            else:
+                repo_root = str(Path(kernel_path).parent)
+
+    testcase_sel_path = pp_dir / "testcase_selection.json"
+    if testcase_sel_path.exists():
+        try:
+            ts = json.loads(testcase_sel_path.read_text())
+            if isinstance(ts, dict):
+                harness_path = ts.get("harness_path", "")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    discovery = None
+    discovery_path = pp_dir / "discovery.json"
+    if discovery_path.exists():
+        try:
+            discovery = json.loads(discovery_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return PreprocessContext(
+        kernel_path=kernel_path,
+        repo_root=repo_root,
+        harness_path=harness_path,
+        preprocess_dir=str(pp_dir),
+        commandment_path=str(pp_dir / "COMMANDMENT.md") if (pp_dir / "COMMANDMENT.md").exists() else "",
+        codebase_context_path=str(pp_dir / "CODEBASE_CONTEXT.md") if (pp_dir / "CODEBASE_CONTEXT.md").exists() else "",
+        baseline_metrics_path=str(pp_dir / "baseline_metrics.json") if (pp_dir / "baseline_metrics.json").exists() else "",
+        profiling_result_path=str(pp_dir / "profile.json") if (pp_dir / "profile.json").exists() else "",
+        discovery=discovery,
+    )
+
+
 def main() -> None:
     """CLI: ``geak-orchestrate --preprocess-dir <dir> [--gpu-ids 0,1] [--max-rounds 3]``."""
     import argparse
@@ -145,61 +198,33 @@ def main() -> None:
         print(f"ERROR: preprocess directory not found: {args.preprocess_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # Reconstruct preprocessor context from artefact files
-    ctx: dict[str, Any] = {}
+    from minisweagent.run.pipeline_types import PreprocessContext
 
-    resolved_path = pp_dir / "resolved.json"
-    if resolved_path.exists():
-        resolved = json.loads(resolved_path.read_text())
-        ctx["kernel_path"] = resolved.get("local_file_path")
-        kernel_file = resolved.get("local_file_path", "")
-        repo_path = resolved.get("local_repo_path")
-        if kernel_file:
-            from minisweagent.run.preprocess.resolve_kernel_url import _find_git_root
-            git_root = _find_git_root(Path(kernel_file))
-            if git_root:
-                repo_path = str(git_root)
-            elif not repo_path:
-                repo_path = str(Path(kernel_file).parent)
-        ctx["repo_root"] = repo_path or str(pp_dir)
+    manifest_path = pp_dir / "preprocess_context.json"
+    if manifest_path.exists():
+        preprocess_ctx = PreprocessContext.from_dict(json.loads(manifest_path.read_text()))
     else:
-        ctx["repo_root"] = str(pp_dir)
+        logger.warning("preprocess_context.json not found in %s, falling back to file probing", pp_dir)
+        preprocess_ctx = _probe_preprocess_dir(pp_dir)
 
-    discovery_path = pp_dir / "discovery.json"
-    if discovery_path.exists():
-        ctx["discovery"] = json.loads(discovery_path.read_text())
-
-    profile_path = pp_dir / "profile.json"
-    if profile_path.exists():
-        ctx["profiling"] = json.loads(profile_path.read_text())
-
-    baseline_path = pp_dir / "baseline_metrics.json"
-    if baseline_path.exists():
-        ctx["baseline_metrics"] = json.loads(baseline_path.read_text())
-
-    testcase_sel_path = pp_dir / "testcase_selection.json"
-    if testcase_sel_path.exists():
-        ts = json.loads(testcase_sel_path.read_text())
-        if isinstance(ts, dict):
-            ctx.setdefault("test_command", ts.get("test_command"))
-            ctx.setdefault("harness_path", ts.get("harness_path"))
-
-    commandment_path = pp_dir / "COMMANDMENT.md"
-    if commandment_path.exists():
-        ctx["commandment"] = commandment_path.read_text()
-        ctx["commandment_path"] = str(commandment_path)
-
-    ctx["output_dir"] = str(pp_dir)
-    ctx["preprocess_dir"] = str(pp_dir)
-
-    # Paths for task generator
-    if baseline_path.exists():
-        ctx["baseline_metrics_path"] = str(baseline_path)
-    if profile_path.exists():
-        ctx["profiling_path"] = str(profile_path)
-    codebase_ctx_path = pp_dir / "CODEBASE_CONTEXT.md"
-    if codebase_ctx_path.exists():
-        ctx["codebase_context_path"] = str(codebase_ctx_path)
+    ctx: dict[str, Any] = {
+        "kernel_path": preprocess_ctx.kernel_path,
+        "repo_root": preprocess_ctx.repo_root,
+        "harness_path": preprocess_ctx.harness_path,
+        "output_dir": preprocess_ctx.preprocess_dir,
+        "preprocess_dir": preprocess_ctx.preprocess_dir,
+        "commandment_path": preprocess_ctx.commandment_path,
+        "codebase_context_path": preprocess_ctx.codebase_context_path,
+        "baseline_metrics_path": preprocess_ctx.baseline_metrics_path,
+        "profiling_path": preprocess_ctx.profiling_result_path,
+        "discovery": preprocess_ctx.discovery,
+    }
+    if preprocess_ctx.commandment_path and Path(preprocess_ctx.commandment_path).exists():
+        ctx["commandment"] = Path(preprocess_ctx.commandment_path).read_text()
+    if preprocess_ctx.baseline_metrics_path and Path(preprocess_ctx.baseline_metrics_path).exists():
+        ctx["baseline_metrics"] = json.loads(Path(preprocess_ctx.baseline_metrics_path).read_text())
+    if preprocess_ctx.profiling_result_path and Path(preprocess_ctx.profiling_result_path).exists():
+        ctx["profiling"] = json.loads(Path(preprocess_ctx.profiling_result_path).read_text())
 
     # Parse GPU IDs
     if args.gpu_ids:
@@ -236,7 +261,8 @@ def main() -> None:
     )
 
     if report:
-        print(json.dumps(report, indent=2, default=str)[:2000])
+        report_dict = report.to_dict() if hasattr(report, "to_dict") else report
+        print(json.dumps(report_dict, indent=2, default=str)[:2000])
 
 
 if __name__ == "__main__":

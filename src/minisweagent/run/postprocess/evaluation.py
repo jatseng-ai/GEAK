@@ -22,9 +22,17 @@ from typing import Any
 
 from minisweagent.run.postprocess.benchmark_parsing import (
     extract_benchmark_config_lines as _extract_benchmark_config_lines,
+)
+from minisweagent.run.postprocess.benchmark_parsing import (
     extract_latency_ms as _extract_latency_ms,
+)
+from minisweagent.run.postprocess.benchmark_parsing import (
     extract_reported_speedup as _extract_reported_speedup,
+)
+from minisweagent.run.postprocess.benchmark_parsing import (
     parse_shape_count as _parse_shape_count,
+)
+from minisweagent.run.postprocess.benchmark_parsing import (
     parse_total_kernel_time_ms as _parse_total_kernel_time_ms,
 )
 from minisweagent.run.utils.generated_artifacts import (
@@ -170,7 +178,7 @@ def evaluate_round_best(
     round_num: int,
     results_dir: Path,
     _print,
-) -> dict[str, Any] | None:
+) -> Any:
     """Evaluate the single best kernel from a round with FULL_BENCHMARK + PROFILE.
 
     Creates a temporary worktree, applies the best patch, sets all GEAK_*
@@ -271,7 +279,9 @@ def evaluate_round_best(
     if not commandment_path.exists():
         eval_path = output_dir / f"round_{round_num}_evaluation.json"
         eval_path.write_text(json.dumps(round_eval, indent=2, default=str))
-        return round_eval
+        from minisweagent.run.pipeline_types import RoundEvaluation as _RE
+        return _RE(round=round_num, best_patch=best_patch_file or "",
+                   best_task=best_task, benchmark_speedup=best_speedup)
 
     repo_root = ctx.get("repo_root", "")
     harness_path = ctx.get("harness_path", "")
@@ -287,7 +297,11 @@ def evaluate_round_best(
             round_eval["status"] = "patch_failed"
             eval_path = output_dir / f"round_{round_num}_evaluation.json"
             eval_path.write_text(json.dumps(round_eval, indent=2, default=str))
-            return round_eval
+            from minisweagent.run.pipeline_types import FullBenchmarkResult as _FB
+            from minisweagent.run.pipeline_types import RoundEvaluation as _RE
+            return _RE(round=round_num, best_patch=best_patch_file or "",
+                       best_task=best_task, benchmark_speedup=best_speedup,
+                       full_benchmark=_FB(failure_reason=f"patch apply failed: {exc}"))
 
         eval_harness_path = harness_path
         if harness_path and eval_worktree:
@@ -379,9 +393,9 @@ def evaluate_round_best(
                     if candidate_configs and baseline_configs:
                         if candidate_configs != baseline_configs:
                             _print(
-                                f"  WARNING: Benchmark config mismatch detected! "
-                                f"Agent may have modified benchmark parameters. "
-                                f"Rejecting speedup."
+                                "  WARNING: Benchmark config mismatch detected! "
+                                "Agent may have modified benchmark parameters. "
+                                "Rejecting speedup."
                             )
                             logger.warning(
                                 "Benchmark config mismatch: agent modified benchmark configs. "
@@ -487,8 +501,44 @@ def evaluate_round_best(
         if eval_worktree:
             cleanup_eval_worktree(repo_root, eval_worktree)
 
+    # Write full detail dict for backward compatibility and debugging
     eval_path = output_dir / f"round_{round_num}_evaluation.json"
     eval_path.write_text(json.dumps(round_eval, indent=2, default=str))
     _print(f"  Round evaluation written to: {eval_path}")
 
-    return round_eval
+    # Write stdout/profile to files instead of embedding in the typed return
+    fb_raw = round_eval.get("full_benchmark") or {}
+    if isinstance(fb_raw, dict) and fb_raw.get("stdout"):
+        fb_output_path = output_dir / f"round_{round_num}_full_benchmark.txt"
+        fb_output_path.write_text(fb_raw["stdout"])
+    profile_raw = round_eval.get("profile_comparison")
+    if isinstance(profile_raw, dict) and profile_raw:
+        profile_path = output_dir / f"round_{round_num}_profile_comparison.json"
+        profile_path.write_text(json.dumps(profile_raw, indent=2, default=str))
+
+    # Convert to typed boundary object
+    from minisweagent.run.pipeline_types import FullBenchmarkResult, RoundEvaluation
+
+    fb_typed = None
+    if isinstance(fb_raw, dict):
+        failure = None
+        if fb_raw.get("error"):
+            failure = str(fb_raw["error"])
+        elif fb_raw.get("config_mismatch"):
+            failure = f"config mismatch: {fb_raw.get('config_mismatch_detail', '')}"
+        elif not fb_raw.get("success", True) and fb_raw.get("returncode", 0) != 0:
+            failure = f"benchmark failed (exit code {fb_raw.get('returncode')})"
+        fb_typed = FullBenchmarkResult(
+            verified_speedup=fb_raw.get("verified_speedup"),
+            baseline_ms=fb_raw.get("baseline_ms"),
+            candidate_ms=fb_raw.get("candidate_ms"),
+            failure_reason=failure,
+        )
+
+    return RoundEvaluation(
+        round=round_num,
+        best_patch=round_eval.get("best_patch", ""),
+        best_task=round_eval.get("best_task", ""),
+        benchmark_speedup=round_eval.get("benchmark_speedup", 1.0),
+        full_benchmark=fb_typed,
+    )
