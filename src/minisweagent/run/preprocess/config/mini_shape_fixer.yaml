@@ -8,6 +8,12 @@ agent:
       Determine the SOURCE-ORDERED full case stream.
       Then determine the exact sampled cases that `--benchmark`,
       `--correctness`, and `--profile` should use.
+      If the source file is a task-runner or task config, use it only as an
+      adapter unless it clearly mirrors the repo-native benchmark/test layer.
+      For rocPRIM-style repos, prefer repo-native `benchmark/benchmark_*.cpp`,
+      `benchmark/*.parallel.hpp`, `test/rocprim/test_*.cpp`, target names like
+      `benchmark_device_*` / `test_device_*`, and their emitted case IDs as the
+      source of truth.
 
     Step 2: Read the HARNESS FILE. What configs does it use?
       Determine the HARNESS-ORDERED full case stream.
@@ -19,6 +25,10 @@ agent:
         `_pick()` (or equivalent logic) to choose different sampled cases.
       - If the source file already defines a case list/helper, that ordering is
         authoritative.
+      - If a task-runner exists, preserve it only insofar as it faithfully
+        wraps the same repo-native benchmark/test semantics. Do NOT approve a
+        wrapper that invents new commands, unsupported flags, or a different
+        case set than the real benchmark/test sources.
       - If the source file uses nested loops, preserve that loop nesting order.
       - Tuple vs list syntax is fine only when the resulting sampled cases are
         exactly the same.

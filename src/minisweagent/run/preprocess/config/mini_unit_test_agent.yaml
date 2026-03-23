@@ -84,6 +84,46 @@ agent:
           tolerances, assert patterns).
        3. Wrap them in 4 CLI modes with our output format.
 
+    Command-wrapper kernels (HIP/C++ / benchmark-binary repos):
+       - Some repositories already define authoritative benchmark/test sources
+         and binaries. In those cases, the harness must still be a THIN
+         WRAPPER around that existing repo-native behavior.
+       - For rocPRIM-style repositories, the PRIMARY source of truth is the
+         repo-native benchmark and test implementation itself, for example:
+         `benchmark/benchmark_*.cpp`, `benchmark/*.parallel.hpp`,
+         `test/rocprim/test_*.cpp`, CMake targets like
+         `benchmark_device_*`, `test_device_*`, and their emitted case IDs.
+       - Read those repo-native benchmark/test files first. Preserve their
+         case definitions, ordering, and target names.
+       - If the repo/task also provides a `config.yaml` or
+         `scripts/task_runner.py`, treat that only as an ADAPTER around the
+         repo-native benchmark/test behavior unless it clearly mirrors the same
+         sources and target names. Do NOT let the adapter override the real
+         upstream benchmark/test semantics.
+       - Prefer importing and reusing existing helpers directly, for example:
+         `TEST_SHAPES`, `run_compile()`, `run_correctness()`,
+         `run_performance()`, benchmark target names, or test binary names.
+       - If direct import is awkward, shell out via `subprocess.run()` to the
+         authoritative repo-native commands exactly as defined. Do NOT invent
+         new build or benchmark commands if the repo/task already provides
+         them.
+       - If the authoritative benchmark/test layer already exposes a
+         deterministic full case
+         list and that list has 25 or fewer cases, `--benchmark` and
+         `--correctness` MAY use all of them. In that case `--full-benchmark`
+         may equal `--benchmark`.
+       - `--profile` must NOT pass unsupported flags like `--profile` to a
+         helper script that only supports `compile/correctness/performance`.
+         Instead, create a deterministic reduced wrapper path using the same
+         underlying repo-native binaries/helpers on 5 representative cases.
+       - Parse performance output or report files from the authoritative
+         benchmark/test layer and re-emit them in the standard GEAK format, including
+         `GEAK_SHAPES_USED` and `GEAK_RESULT_LATENCY_MS`.
+       - For these kernels, `harness_shapes_source.txt` should point to the
+         authoritative repo-native benchmark/test file. Only fall back to a
+         task runner or task config file when that is the clearest place where
+         the same case set is materialized.
+
     The four CLI modes:
        - `--full-benchmark`: runs ALL configs from the benchmark file.
          Print per-shape config + latency (e.g. "B=2 H=64 D=128  0.0523ms").
@@ -123,11 +163,17 @@ agent:
           - The ordered full case stream, not just the unique parameter values
           - The helper functions (e.g. input_helper, setup_inputs)
           - The kernel call (how the benchmark invokes the kernel)
+          - For command-wrapper kernels: the authoritative repo-native
+            benchmark/test files, target names, case list, and
+            compile/correctness/performance commands or binary entrypoints
        2. In your harness, IMPORT these:
           - Config variables or copy the exact loop verbatim
           - The exact ordered case list or the exact helper/loop that produces it
           - Helper functions that build inputs
           - The kernel function
+          - For command-wrapper kernels: repo-native benchmark/test helpers,
+            case lists, and target names first; task-runner helpers or command
+            metadata only when they faithfully wrap the same behavior
        3. Your benchmark loop should be:
             for config in configs:
                 fn = benchmark_file.build_kernel_call(config)  # imported helper

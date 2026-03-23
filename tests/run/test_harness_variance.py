@@ -26,42 +26,65 @@ import sys
 import tempfile
 from pathlib import Path
 
-KERNELS = {
-    "fused_rms_fp8": {
-        "url": "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/quant/fused_fp8_quant.py#L24",
-        "local": "aiter/ops/triton/quant/fused_fp8_quant.py",
-    },
+# Triton kernels (from aiter repo, use --aiter-repo for local path)
+TRITON_KERNELS = {
     "topk": {
         "url": "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/topk.py#L167",
         "local": "aiter/ops/triton/topk.py",
-    },
-    "fused_qkv_rope": {
-        "url": "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/rope/fused_qkv_split_qk_rope.py#L8",
-        "local": "aiter/ops/triton/rope/fused_qkv_split_qk_rope.py",
     },
     "lean_atten_paged": {
         "url": "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/attention/lean_atten_paged.py",
         "local": "aiter/ops/triton/attention/lean_atten_paged.py",
     },
-    "moe_routing_sigmoid_top1": {
-        "url": "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/moe/moe_routing_sigmoid_top1_fused.py#L16",
-        "local": "aiter/ops/triton/moe/moe_routing_sigmoid_top1_fused.py",
+    "fused_rms_fp8": {
+        "url": "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/quant/fused_fp8_quant.py#L24",
+        "local": "aiter/ops/triton/quant/fused_fp8_quant.py",
+    },
+    "fused_qkv_rope": {
+        "url": "https://github.com/ROCm/aiter/blob/main/aiter/ops/triton/rope/fused_qkv_split_qk_rope.py#L8",
+        "local": "aiter/ops/triton/rope/fused_qkv_split_qk_rope.py",
     },
 }
+
+# HIP kernels (standalone or repo-based, use --hip-arena for base path)
+HIP_KERNELS = {
+    "silu": {
+        "kernel": "silu.hip",
+        "repo_root": ".",
+        "arena_path": "hip2hip/others/silu",
+    },
+    "gather_points": {
+        "kernel": "src/gather_points_cuda.hip",
+        "repo_root": ".",
+        "arena_path": "hip2hip/others/gather_points",
+    },
+    "device_search_n": {
+        "kernel": "rocPRIM/rocprim/include/rocprim/device/device_search_n.hpp",
+        "repo_root": "rocPRIM",
+        "arena_path": "repository/rocprim/device_search_n",
+    },
+    "device_binary_search": {
+        "kernel": "rocPRIM/rocprim/include/rocprim/device/device_binary_search.hpp",
+        "repo_root": "rocPRIM",
+        "arena_path": "repository/rocprim/device_binary_search",
+    },
+}
+
+KERNELS = {**TRITON_KERNELS, **HIP_KERNELS}
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def run_preprocess(kernel_url, output_dir, gpu_id=0, aiter_repo=None):
+def run_preprocess(kernel_url, output_dir, gpu_id=0, repo=None):
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable, "-m", "minisweagent.run.preprocess.preprocessor",
         kernel_url, "-o", str(out), "--gpu", str(gpu_id),
     ]
-    if aiter_repo:
-        cmd.extend(["--repo", aiter_repo])
+    if repo:
+        cmd.extend(["--repo", repo])
     env = os.environ.copy()
     env["GEAK_BENCHMARK_ITERATIONS"] = "5"
     env["GEAK_HARNESS_ONLY"] = "1"
@@ -139,12 +162,12 @@ def get_repo_root(output_dir):
     return None
 
 
-def test_kernel_variance(kernel_name, kernel_url, base_dir, num_runs=5, gpu_id=0, aiter_repo=None):
+def test_kernel_variance(kernel_name, kernel_url, base_dir, num_runs=5, gpu_id=0, repo=None):
     """Run preprocessing N times and collect variance data."""
     print(f"\n{'='*60}")
     print(f"  {kernel_name} ({num_runs} runs)")
-    if aiter_repo:
-        print(f"  Using pre-cloned repo: {aiter_repo}")
+    if repo:
+        print(f"  Using repo: {repo}")
     print(f"{'='*60}")
 
     runs = []
@@ -168,7 +191,7 @@ def test_kernel_variance(kernel_name, kernel_url, base_dir, num_runs=5, gpu_id=0
         }
 
         try:
-            ok, _, stderr = run_preprocess(kernel_url, str(run_dir), gpu_id=gpu_id, aiter_repo=aiter_repo)
+            ok, _, stderr = run_preprocess(kernel_url, str(run_dir), gpu_id=gpu_id, repo=repo)
         except Exception as exc:
             ok = False
             stderr = str(exc)
@@ -342,18 +365,14 @@ def analyze_variance(kernel_name, runs):
     return report
 
 
-def _run_kernel_batch(kernel_names, kernels_dict, base_dir, num_runs, gpu_id, aiter_repo):
-    """Run variance test for a single kernel (called in a worker thread)."""
+def _run_kernel_batch(kernel_names, resolve_fn, base_dir, num_runs, gpu_id):
+    """Run variance test for a batch of kernels (called in a worker thread)."""
     results = {}
     for name in kernel_names:
-        kinfo = kernels_dict[name]
-        if aiter_repo:
-            kernel_ref = str(Path(aiter_repo) / kinfo["local"])
-        else:
-            kernel_ref = kinfo["url"]
+        kernel_ref, repo = resolve_fn(name)
         runs, report = test_kernel_variance(
             name, kernel_ref, base_dir, num_runs=num_runs, gpu_id=gpu_id,
-            aiter_repo=aiter_repo,
+            repo=repo,
         )
         results[name] = (runs, report)
 
@@ -384,7 +403,11 @@ def main():
     )
     parser.add_argument(
         "--aiter-repo", default=None,
-        help="Path to a pre-cloned aiter repo (skips git clone each run)",
+        help="Path to a pre-cloned aiter repo (skips git clone for triton kernels)",
+    )
+    parser.add_argument(
+        "--hip-arena", default=None,
+        help="Path to AgentKernelArena/tasks/ (for HIP kernels)",
     )
     args = parser.parse_args()
 
@@ -399,18 +422,30 @@ def main():
     print(f"Runs per kernel: {args.runs}")
     print(f"Parallel: {parallel} (GPUs: {gpu_ids})")
 
+    def _resolve_kernel(name):
+        """Resolve kernel path and repo root for preprocessing."""
+        kinfo = KERNELS[name]
+        if name in TRITON_KERNELS:
+            if args.aiter_repo:
+                return str(Path(args.aiter_repo) / kinfo["local"]), args.aiter_repo
+            return kinfo["url"], None
+        elif name in HIP_KERNELS:
+            if not args.hip_arena:
+                raise ValueError(f"HIP kernel {name} requires --hip-arena")
+            task_dir = Path(args.hip_arena) / kinfo["arena_path"]
+            kernel_path = str(task_dir / kinfo["kernel"])
+            repo_root = str(task_dir / kinfo["repo_root"])
+            return kernel_path, repo_root
+        raise ValueError(f"Unknown kernel: {name}")
+
     all_reports = {}
 
     if parallel <= 1:
         for name in args.kernel:
-            kinfo = KERNELS[name]
-            if args.aiter_repo:
-                kernel_ref = str(Path(args.aiter_repo) / kinfo["local"])
-            else:
-                kernel_ref = kinfo["url"]
+            kernel_ref, repo = _resolve_kernel(name)
             runs, report = test_kernel_variance(
                 name, kernel_ref, base_dir, num_runs=args.runs, gpu_id=gpu_ids[0],
-                aiter_repo=args.aiter_repo,
+                repo=repo,
             )
             all_reports[name] = report
 
@@ -439,8 +474,8 @@ def main():
                     continue
                 gpu = gpu_ids[batch_idx]
                 future = pool.submit(
-                    _run_kernel_batch, batch, KERNELS, base_dir,
-                    args.runs, gpu, args.aiter_repo,
+                    _run_kernel_batch, batch, _resolve_kernel, base_dir,
+                    args.runs, gpu,
                 )
                 futures[future] = (batch, gpu)
 
