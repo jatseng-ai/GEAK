@@ -26,6 +26,8 @@ prompt_session = PromptSession(history=FileHistory(global_config_dir / "interact
 class InteractiveAgentConfig(AgentConfig):
     mode: Literal["human", "confirm", "yolo"] = "confirm"
     """Whether to confirm actions."""
+    print_messages: bool = True
+    """Whether to print chat/session messages to the terminal."""
     whitelist_actions: list[str] = field(default_factory=list)
     """Never confirm actions that match these regular expressions."""
     confirm_exit: bool = True
@@ -42,6 +44,8 @@ class InteractiveAgent(DefaultAgent):
     def add_message(self, role: str, content: str, **kwargs):
         # Extend supermethod to print messages
         super().add_message(role, content, **kwargs)
+        if not self.config.print_messages:
+            return
         if role == "assistant":
             console.print(
                 f"\n[red][bold]mini-swe-agent[/bold] (step [bold]{self.model.n_calls}[/bold], [bold]${self.model.cost:.2f}[/bold]):[/red]\n",
@@ -77,7 +81,8 @@ class InteractiveAgent(DefaultAgent):
     def step(self) -> dict:
         # Override the step method to handle user interruption
         try:
-            console.print(Rule())
+            if self.config.print_messages:
+                console.print(Rule())
             return super().step()
         except KeyboardInterrupt:
             # We always add a message about the interrupt and then just proceed to the next step
