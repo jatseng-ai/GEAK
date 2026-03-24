@@ -10,6 +10,9 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+# Silence package startup banner by default for this CLI entrypoint.
+os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")
+
 
 class TeeOutput:
     """捕获 stdout/stderr 到 buffer，同时保持终端输出"""
@@ -77,6 +80,7 @@ def main(
     model_class: str | None = typer.Option(None, "--model-class", help="Model class to use (e.g., 'anthropic' or 'minisweagent.models.anthropic.AnthropicModel')", rich_help_panel="Advanced"),
     task: str | None = typer.Option(None, "-t", "--task", help="Task/problem statement", show_default=False),
     yolo: bool = typer.Option(False, "-y", "--yolo", help="Run without confirmation"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress chat logs and print only final status"),
     cost_limit: float | None = typer.Option(None, "-l", "--cost-limit", help="Cost limit. Set to 0 to disable."),
     config_spec: Path = typer.Option(DEFAULT_CONFIG, "-c", "--config", help="Path to config file"),
     output: Path | None = typer.Option(DEFAULT_OUTPUT, "-o", "--output", help="Output trajectory file"),
@@ -91,7 +95,8 @@ def main(
     
     configure_if_first_time()
     config_path = get_config_path(config_spec)
-    console.print(f"Loading agent config from [bold green]'{config_path}'[/bold green]")
+    if not quiet:
+        console.print(f"Loading agent config from [bold green]'{config_path}'[/bold green]")
     config = yaml.safe_load(config_path.read_text())
 
     if not task:
@@ -109,6 +114,8 @@ def main(
 
     if yolo:
         config.setdefault("agent", {})["mode"] = "yolo"
+    if quiet:
+        config.setdefault("agent", {})["print_messages"] = False
     if cost_limit is not None:
         config.setdefault("agent", {})["cost_limit"] = cost_limit
     if exit_immediately:
@@ -125,7 +132,8 @@ def main(
         import os as _os
         _api_key = _os.getenv("AMD_LLM_API_KEY") or _os.getenv("LLM_GATEWAY_KEY") or _os.getenv("ANTHROPIC_API_KEY")
     _api_key_display = f"{_api_key[:8]}..." if _api_key and len(_api_key) > 8 else _api_key or "Not set"
-    console.print(f"\\[mini-swe-agent] Using model: [bold cyan]{_model_name}[/bold cyan], API key: [bold cyan]{_api_key_display}[/bold cyan]")
+    if not quiet:
+        console.print(f"\\[mini-swe-agent] Using model: [bold cyan]{_model_name}[/bold cyan], API key: [bold cyan]{_api_key_display}[/bold cyan]")
     
     # MCP integration
     extra_agent_kwargs = {}
@@ -148,7 +156,8 @@ def main(
         
         if debug:
             env = DebugMCPEnvironment(**config.get("env", {}))
-            console.print("[bold yellow]🐛 Debug mode enabled[/bold yellow]")
+            if not quiet:
+                console.print("[bold yellow]🐛 Debug mode enabled[/bold yellow]")
         else:
             env = MCPEnabledEnvironment(**config.get("env", {}))
         
@@ -159,7 +168,8 @@ def main(
         agent_config.pop("system_template", None)
         agent_config.pop("instance_template", None)
         
-        console.print("[bold green]🔌 MCP integration enabled[/bold green]")
+        if not quiet:
+            console.print("[bold green]🔌 MCP integration enabled[/bold green]")
     else:
         env = LocalEnvironment(**config.get("env", {}))
         agent_config = config.get("agent", {})
@@ -169,7 +179,8 @@ def main(
     if visual == (os.getenv("MSWEA_VISUAL_MODE_DEFAULT", "false") == "false"):
         agent_class = TextualAgent
         if mcp:
-            console.print("[yellow]Warning: MCP integration with -v (Textual UI) is not fully supported yet.[/yellow]")
+            if not quiet:
+                console.print("[yellow]Warning: MCP integration with -v (Textual UI) is not fully supported yet.[/yellow]")
 
     agent = agent_class(model, env, **agent_config, **extra_agent_kwargs)
     exit_status, result, extra_info = None, None, None
@@ -186,7 +197,16 @@ def main(
             if console_logs:
                 extra_info = extra_info or {}
                 extra_info["console_logs"] = console_logs
-            save_traj(agent, output, exit_status=exit_status, result=result, extra_info=extra_info)  # type: ignore[arg-type]
+            save_traj(  # type: ignore[arg-type]
+                agent,
+                output,
+                print_path=not quiet,
+                exit_status=exit_status,
+                result=result,
+                extra_info=extra_info,
+            )
+    if quiet:
+        print("Agent FINISHED")
     return agent
 
 
