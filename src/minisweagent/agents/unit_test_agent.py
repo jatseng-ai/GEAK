@@ -14,8 +14,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
 from minisweagent import Environment, Model
 from minisweagent.agents.default import AgentConfig, DefaultAgent
 from minisweagent.config import load_agent_config
@@ -88,9 +86,9 @@ _LANGUAGE_GUIDANCE: dict[str, str] = {
         "- The harness is Python-based (test_harness.py), NOT a C++ binary.\n"
         "- Kernels are compiled as standalone .so files — no dependency on CK's build system.\n"
         "- The COMMANDMENT SETUP section should run: ./compile.py && echo 'Build OK'\n"
-        "- CORRECTNESS: python test_harness.py libbaseline.so liboptimized.so --correctness\n"
-        "- PROFILE:     python test_harness.py libbaseline.so liboptimized.so --profile\n"
-        "- BENCHMARK:   python test_harness.py libbaseline.so liboptimized.so --benchmark\n"
+        "- CORRECTNESS: python test_harness.py --correctness\n"
+        "- PROFILE:     python test_harness.py --profile\n"
+        "- BENCHMARK:   python test_harness.py --benchmark\n"
         "- NEVER use sys.path.insert or importlib.util. Use ctypes.CDLL for kernel loading.\n"
         "- Use torch.testing.assert_close for correctness validation between baseline and optimized.\n"
         "- A CK harness recipe (if available) provides the exact file contents to generate."
@@ -115,53 +113,11 @@ _RECIPE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "knowledge"
 
 
 def _load_ck_recipe(kernel_info) -> str:
-    """Load the CK harness recipe matching the kernel's device type.
-
-    Reads ``_index.yaml`` for the device-type-to-recipe mapping, scans the
-    kernel source for known device type class names, and returns the matching
-    recipe markdown content.  Falls back to ``default_recipe`` when no device
-    type is matched.
-    """
-    index_path = _RECIPE_DIR / "_index.yaml"
-    if not index_path.exists():
-        _logger.debug("CK recipe index not found at %s", index_path)
-        return ""
-
-    try:
-        with open(index_path) as f:
-            index = yaml.safe_load(f)
-    except Exception:
-        _logger.warning("Failed to parse CK recipe index", exc_info=True)
-        return ""
-
-    device_type_map: dict[str, str] = index.get("device_type_map", {})
-    default_recipe: str = index.get("default_recipe", "")
-
-    recipe_file = default_recipe
-    source_text = ""
-
-    file_path = getattr(kernel_info, "file_path", None)
-    if file_path:
-        try:
-            source_text = Path(file_path).read_text(errors="replace")
-        except Exception:
-            _logger.debug("Could not read kernel source at %s", file_path)
-
-    if source_text:
-        for device_type, recipe_name in device_type_map.items():
-            if re.search(rf"\b{re.escape(device_type)}\b", source_text):
-                recipe_file = recipe_name
-                _logger.info("Matched CK device type '%s' -> recipe '%s'", device_type, recipe_name)
-                break
-
-    if not recipe_file:
-        return ""
-
-    recipe_path = _RECIPE_DIR / recipe_file
+    """Load the canonical CK harness recipe (softmax.md)."""
+    recipe_path = _RECIPE_DIR / "softmax.md"
     if not recipe_path.exists():
         _logger.warning("CK recipe file not found: %s", recipe_path)
         return ""
-
     try:
         return recipe_path.read_text()
     except Exception:

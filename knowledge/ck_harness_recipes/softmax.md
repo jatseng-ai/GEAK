@@ -250,6 +250,9 @@ Loads baseline and optimized CK softmax kernel .so files via ctypes,
 verifies the optimized kernel against the baseline (ground truth), and
 reports bandwidth and speedup.
 
+The .so files (libbaseline.so, liboptimized.so) are auto-discovered in the
+same directory as this script.
+
 Modes:
     --correctness     Verify optimized against baseline on HARNESS_SHAPES
     --profile         Run optimized kernel once per PROFILE_SHAPE (for rocprofv3)
@@ -257,11 +260,11 @@ Modes:
     --full-benchmark  Benchmark both kernels on ALL_SHAPES, report speedup
 
 Usage:
-    python test_harness.py libbaseline.so liboptimized.so --correctness
-    python test_harness.py libbaseline.so liboptimized.so --benchmark
-    python test_harness.py libbaseline.so liboptimized.so --benchmark --iterations 50
-    python test_harness.py libbaseline.so liboptimized.so --full-benchmark
-    python test_harness.py libbaseline.so liboptimized.so --profile
+    python test_harness.py --correctness
+    python test_harness.py --benchmark
+    python test_harness.py --benchmark --iterations 50
+    python test_harness.py --full-benchmark
+    python test_harness.py --profile
 """
 
 import argparse
@@ -272,6 +275,10 @@ import sys
 from pathlib import Path
 
 import torch
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+BASELINE_SO = SCRIPT_DIR / "libbaseline.so"
+OPTIMIZED_SO = SCRIPT_DIR / "liboptimized.so"
 
 # -- Shape lists (sorted by element count) ------------------------------------
 # 3D softmax shapes: (Batch, SeqLen, Hidden) with reduction on last dim.
@@ -533,8 +540,6 @@ def get_iterations(args_iterations: int | None) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="GEAK Softmax Test Harness")
-    parser.add_argument("baseline", help="Path to baseline kernel .so (ground truth)")
-    parser.add_argument("optimized", help="Path to optimized kernel .so")
 
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--correctness", action="store_true", help="Verify optimized against baseline")
@@ -546,15 +551,15 @@ def main():
     parser.add_argument("--reduce-dim", type=int, default=-1, help="Reduction dimension (default: last dim)")
     args = parser.parse_args()
 
-    for path in [args.baseline, args.optimized]:
-        if not Path(path).exists():
+    for path in [BASELINE_SO, OPTIMIZED_SO]:
+        if not path.exists():
             print(f"Error: {path} not found", file=sys.stderr)
             sys.exit(1)
 
-    base_label = Path(args.baseline).name
-    opt_label = Path(args.optimized).name
-    base_lib = load_kernel(str(Path(args.baseline).resolve()))
-    opt_lib = load_kernel(str(Path(args.optimized).resolve()))
+    base_label = BASELINE_SO.name
+    opt_label = OPTIMIZED_SO.name
+    base_lib = load_kernel(str(BASELINE_SO))
+    opt_lib = load_kernel(str(OPTIMIZED_SO))
 
     if args.correctness:
         print(f"Correctness check: {opt_label} vs {base_label} (ground truth)")
