@@ -501,7 +501,7 @@
   {
     "name": "openevolve",
     "type": "function",
-    "description": "Run OpenEvolve LLM-guided evolutionary optimization on a GPU kernel. This is a heavyweight tool that spawns a long-running subprocess (up to 2 hours) using GPU compute. It evolves the kernel through multiple iterations of mutation, evaluation, and selection. Use check_openevolve_status first to verify the subsystem is available.",
+    "description": "Run OpenEvolve evolutionary optimization on a GPU kernel. Spawns an automated search that mutates, evaluates, and selects kernel variants through multiple iterations. Typically completes in 15-60 minutes. Often discovers optimizations that manual editing misses. Use check_openevolve_status first to verify the subsystem is available.",
     "parameters": {
       "type": "object",
       "properties": {
