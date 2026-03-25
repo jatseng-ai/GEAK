@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from jinja2 import StrictUndefined, Template
 
 from minisweagent import Environment, Model
+from minisweagent.skills.skill_runtime import SkillRuntime
 
 
 @dataclass
@@ -27,6 +28,7 @@ class AgentConfig:
     action_observation_template: str = "Observation: {{output}}"
     step_limit: int = 0
     cost_limit: float = 3.0
+    use_skills: bool = False
 
 
 class NonTerminatingException(Exception):
@@ -60,6 +62,7 @@ class DefaultAgent:
         self.model = model
         self.env = env
         self.extra_template_vars = {}
+        self.skillruntime = SkillRuntime()
 
     def render_template(self, template: str, **kwargs) -> str:
         template_vars = asdict(self.config) | self.env.get_template_vars() | self.model.get_template_vars()
@@ -67,13 +70,17 @@ class DefaultAgent:
             **kwargs, **template_vars, **self.extra_template_vars
         )
 
-    def add_message(self, role: str, content: str, **kwargs):
-        self.messages.append({"role": role, "content": content, **kwargs})
+    def add_message(self, role: str, content: str | None = None, **kwargs):
+        # Model may return content=None; APIs expect string message bodies.
+        text = "" if content is None else content
+        self.messages.append({"role": role, "content": text, **kwargs})
 
     def run(self, task: str, **kwargs) -> tuple[str, str]:
         """Run step() until agent is finished. Return exit status & message"""
         self.extra_template_vars |= {"task": task, **kwargs}
         self.messages = []
+        if self.config.use_skills:
+            self.config.system_template += self.skillruntime.build_system_prompt()
         self.add_message("system", self.render_template(self.config.system_template))
         self.add_message("user", self.render_template(self.config.instance_template))
         while True:
@@ -99,17 +106,37 @@ class DefaultAgent:
 
     def get_observation(self, response: dict) -> dict:
         """Execute the action and return the observation."""
-        output = self.execute_action(self.parse_action(response))
+        content = response.get("content") or ""
+        actions = re.findall(r"```bash\s*\n(.*?)\n```", content, re.DOTALL)
+        parsed = self.parse_action(response)
+        if len(actions) == 1:
+            output = self.execute_action(parsed)
+        else:
+            output = {"output": "", "returncode": 0}
+        if self.config.use_skills:
+            skills_action = self.skillruntime.load_skill(response)
+            out_a = output.get("output") or ""
+            out_b = skills_action.get("output") or ""
+            output["output"] = out_a + out_b
+            output["returncode"] = max(output.get("returncode", 0), skills_action.get("returncode", 0))
         observation = self.render_template(self.config.action_observation_template, output=output)
         self.add_message("user", observation)
         return output
 
     def parse_action(self, response: dict) -> dict:
         """Parse the action from the message. Returns the action."""
-        actions = re.findall(r"```bash\s*\n(.*?)\n```", response["content"], re.DOTALL)
+        content = response.get("content") or ""
+        actions = re.findall(r"```bash\s*\n(.*?)\n```", content, re.DOTALL)
+        if not self.config.use_skills:
+            if len(actions) == 1:
+                return {"action": actions[0].strip(), **response}
+            raise FormatError(self.render_template(self.config.format_error_template, actions=actions))
+
+        if len(actions) > 1:
+            raise FormatError(self.render_template(self.config.format_error_template, actions=actions))
         if len(actions) == 1:
             return {"action": actions[0].strip(), **response}
-        raise FormatError(self.render_template(self.config.format_error_template, actions=actions))
+        return {**response}
 
     def execute_action(self, action: dict) -> dict:
         try:
