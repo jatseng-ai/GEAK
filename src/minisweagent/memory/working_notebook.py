@@ -63,6 +63,12 @@ def parse_speedup_report(text: str) -> dict[str, Any]:
         report["baseline_ms"] = float(overall.group(2))
         report["candidate_ms"] = float(overall.group(3))
 
+    # Fallback: extract candidate latency from GEAK_RESULT_LATENCY_MS
+    if report["candidate_ms"] is None:
+        lat_match = re.search(r"GEAK_RESULT_LATENCY_MS=(\d+\.?\d*)", text)
+        if lat_match:
+            report["candidate_ms"] = float(lat_match.group(1))
+
     per_shape: dict[str, dict[str, float]] = {}
     for match in _PER_SHAPE_RE.finditer(text):
         per_shape[match.group(1)] = {

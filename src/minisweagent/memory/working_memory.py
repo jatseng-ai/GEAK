@@ -176,18 +176,19 @@ class WorkingMemory:
         tag: str | None = None,
         message: str | None = None,
     ) -> None:
-        """Persist a tool result into the file-backed notebook."""
-        if not self._notebook or not output:
+        """Persist a tool result and extract speedup metrics."""
+        if not output:
             return
-        self._notebook.record_result(
-            output=output,
-            returncode=returncode,
-            strategy=self.pending_strategy or None,
-            change_category=self.pending_change_category or None,
-            tag=tag,
-            message=message,
-            step=self.current_step,
-        )
+        if self._notebook:
+            self._notebook.record_result(
+                output=output,
+                returncode=returncode,
+                strategy=self.pending_strategy or None,
+                change_category=self.pending_change_category or None,
+                tag=tag,
+                message=message,
+                step=self.current_step,
+            )
 
         overall = re.search(r"Overall:\s*([0-9]+(?:\.[0-9]+)?)x", output, re.IGNORECASE)
         if overall:
@@ -195,6 +196,17 @@ class WorkingMemory:
             if speedup > self.best_speedup:
                 self.best_strategy = self.pending_strategy
                 self.best_change_category = self.pending_change_category
+
+        # Fallback: extract latency from GEAK_RESULT_LATENCY_MS and compute speedup
+        if not overall and self.baseline_latency_ms > 0:
+            lat_match = re.search(r"GEAK_RESULT_LATENCY_MS=(\d+\.?\d*)", output)
+            if lat_match:
+                lat_ms = float(lat_match.group(1))
+                if lat_ms > 0:
+                    self.update_latency(lat_ms)
+                    if self.baseline_latency_ms / lat_ms > self.best_speedup:
+                        self.best_strategy = self.pending_strategy
+                        self.best_change_category = self.pending_change_category
 
         if "Patch saved:" in output or "Test status:" in output:
             self.pending_strategy = ""
