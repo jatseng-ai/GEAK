@@ -309,8 +309,8 @@ class WorkingMemory:
         parts.append(f"--- Working Memory (step {self.current_step}) ---")
         parts.append(
             "PRIORITY: (1) Algorithmic kernel rewrites > (2) Operation fusion > "
-            "(3) Memory restructuring > (4) Parameter tuning > "
-            "(5) Dispatch-path / wrapper changes LAST."
+            "(3) Dispatch-path optimization (eliminate overhead, bypass slow paths) > "
+            "(4) Memory restructuring > (5) Parameter tuning."
         )
 
         if self.best_speedup > 0 and self.best_latency_ms > 0:
@@ -327,6 +327,14 @@ class WorkingMemory:
             parts.append(f"Tried: {', '.join(self.strategies_tried[-5:])}")
         if self.strategies_failed:
             parts.append(f"Failed: {', '.join(self.strategies_failed[-3:])}")
+
+        # Path reminder: agents often use wrong paths in first steps
+        if self.current_step <= 2:
+            parts.append(
+                "IMPORTANT: Use ABSOLUTE paths from the task context (KERNEL FILE TO EDIT, REPO ROOT). "
+                "Do NOT use relative paths with sed/cat. Use str_replace_editor or "
+                "write the full file with cat > file << 'EOF'."
+            )
 
         # Architecture diagnosis: full detail for first 5 steps, then brief reminder
         if self.profiler_diagnosis and self.current_step <= 5:
