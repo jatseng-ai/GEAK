@@ -69,14 +69,10 @@ _LANGUAGE_GUIDANCE: dict[str, str] = {
     ),
     "ck": (
         "This is a Composable Kernel (CK) kernel (C++ compiled with hipcc + CK includes).\n"
-        "- A build step is REQUIRED before running tests.\n"
-        "- The build step MUST work standalone in the GEAK_WORK_DIR directory.\n"
-        "- The GEAK_WORK_DIR directory is a copy of kernel folder in the repo root, not the full repo root. The build step must be able to run in this directory.\n"
-        "- If the build system doesn't work standalone in the GEAK_WORK_DIR directory, create a CMakeLists_standalone.txt file in the GEAK_WORK_DIR directory. COMMANDMENT SETUP section will copy this file to CMakeLists.txt with `cp CMakeLists_standalone.txt CMakeLists.txt`\n"
-        "- Do not invoke build in the test harness; COMMANDMENT SETUP section builds the kernel, the harness only runs the binary.\n"
-        "- Template parameters (tile sizes, vector widths) are compile-time; test multiple configs.\n"
-        "- Use host-side validation against a reference GEMM/convolution; use `hipEventElapsedTime` for benchmarking.\n"
-        "- NEVER use `sys.path.insert(0, '/absolute/path/...')`. Rely on PYTHONPATH set by COMMANDMENT SETUP section.\n"
+        "- The build and test harness must work standalone in the GEAK_WORK_DIR directory that is created for each optimizer agent later in the pipeline.\n"
+        "- The GEAK_WORK_DIR directory will be a copy of the kernel folder in the repo root, not the full repo root.\n"
+        "- IMPORTANT: Read GEAK/knowledge-base/ck-knowledge-base/standalone-test-harness-recipe/README.md. Follow the recipe to create the standalone build and test harness.\n"
+        "- Test your standalone build and test harness in a temp directory that imitates how GEAK_WORK_DIR is copy of the original kernel folder.\n"
     ),
     "asm": (
         "This is a precompiled HSACO assembly kernel.\n"

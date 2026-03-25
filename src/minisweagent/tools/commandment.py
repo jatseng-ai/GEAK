@@ -156,13 +156,6 @@ def _detect_build_command(repo_root: Path) -> str:
     if (repo_root / "setup.py").exists() or (repo_root / "pyproject.toml").exists():
         return "cd ${GEAK_WORK_DIR} && pip install -e . --no-deps --no-build-isolation 2>&1 | tail -5"
     if (repo_root / "CMakeLists.txt").exists():
-        if (repo_root / "CMakeLists_standalone.txt").exists():
-            # Use standalone CMake so cmake .. works in the worktree
-            return (
-                "cd ${GEAK_WORK_DIR} && cp CMakeLists_standalone.txt CMakeLists.txt && "
-                "mkdir -p build && cd build && cmake .. && cmake --build . 2>&1 | tail -5"
-            )
-        # Standard out-of-tree: build dir = GEAK_WORK_DIR/build
         return "cd ${GEAK_WORK_DIR} && mkdir -p build && cd build && cmake .. && cmake --build . 2>&1 | tail -5"
     if (repo_root / "Makefile").exists():
         return "cd ${GEAK_WORK_DIR} && make 2>&1 | tail -5"
