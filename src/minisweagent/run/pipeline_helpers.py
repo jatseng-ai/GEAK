@@ -135,26 +135,88 @@ def _ensure_mcp_importable() -> None:
 def extract_harness_path(test_command: str) -> str:
     """Extract the harness script path from a test command string.
 
-    Handles patterns like::
+    Handles compound commands chained with ``&&`` by splitting into
+    sub-commands first, then preferring the ``.py`` file that appears
+    alongside a known harness flag (``--correctness``, ``--benchmark``,
+    etc.).  This avoids mis-identifying build helper scripts like
+    ``compile.py`` as the harness.
 
-        'pytest /path/to/test.py -v'                -> '/path/to/test.py'
-        'python /path/to/harness.py --correctness'  -> '/path/to/harness.py'
-        '/path/to/harness.py'                       -> '/path/to/harness.py'
+    Examples::
+
+        'python /path/to/harness.py --correctness'
+            -> '/path/to/harness.py'
+        'cd /repo && python compile.py && python harness.py --correctness'
+            -> '/repo/harness.py'  (not compile.py)
+
+    .. # FIXME: This heuristic parses the TEST_COMMAND string to guess
+    .. # which .py file is the harness.  A more robust approach would be
+    .. # to have the agent emit an explicit HARNESS_PATH alongside the
+    .. # TEST_COMMAND so no guessing is required.
     """
-    try:
-        tokens = shlex.split(test_command)
-    except ValueError:
-        tokens = test_command.split()
+    _HARNESS_FLAGS = set(REQUIRED_HARNESS_FLAGS)
 
-    for token in tokens:
-        if token.endswith(".py") and "/" in token:
-            return token
+    sub_commands = [s.strip() for s in test_command.split("&&")]
 
-    for token in tokens:
-        if token.endswith(".py"):
-            return token
+    # Extract the cd target directory (if present) so we can resolve
+    # relative .py paths against it.
+    cd_dir: str | None = None
+    if sub_commands:
+        try:
+            first_tokens = shlex.split(sub_commands[0])
+        except ValueError:
+            first_tokens = sub_commands[0].split()
+        if len(first_tokens) >= 2 and first_tokens[0] == "cd":
+            cd_dir = first_tokens[1]
 
-    return tokens[-1] if tokens else test_command
+    def _resolve(py_path: str) -> str:
+        """Resolve a relative .py path against the cd target directory."""
+        if "/" in py_path or cd_dir is None:
+            return py_path
+        return str(Path(cd_dir) / py_path)
+
+    # Pass 1: find a .py invoked with a known harness flag.
+    for sub in sub_commands:
+        try:
+            tokens = shlex.split(sub)
+        except ValueError:
+            tokens = sub.split()
+        py_files = [t for t in tokens if t.endswith(".py")]
+        if py_files and _HARNESS_FLAGS & set(tokens):
+            return _resolve(py_files[0])
+
+    # Pass 2: find any .py that isn't a known build/utility script.
+    _BUILD_SCRIPTS = {"compile.py", "setup.py", "build.py", "configure.py"}
+    for sub in sub_commands:
+        try:
+            tokens = shlex.split(sub)
+        except ValueError:
+            tokens = sub.split()
+        for t in tokens:
+            if t.endswith(".py") and "/" in t and Path(t).name not in _BUILD_SCRIPTS:
+                return t
+
+    # Pass 3: first .py with a path component.
+    for sub in sub_commands:
+        try:
+            tokens = shlex.split(sub)
+        except ValueError:
+            tokens = sub.split()
+        for t in tokens:
+            if t.endswith(".py") and "/" in t:
+                return t
+
+    # Pass 4: bare .py filename (resolve against cd dir).
+    for sub in sub_commands:
+        try:
+            tokens = shlex.split(sub)
+        except ValueError:
+            tokens = sub.split()
+        for t in tokens:
+            if t.endswith(".py"):
+                return _resolve(t)
+
+    all_tokens = test_command.split()
+    return all_tokens[-1] if all_tokens else test_command
 
 
 def harness_path_in_worktree(
