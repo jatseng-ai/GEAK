@@ -64,9 +64,11 @@ class AnthropicLLM(LLMInterface):
         }
         if system_message:
             params["system"] = system_message
-        if temperature is not None:
+        if temperature is not None and top_p is not None:
             params["temperature"] = temperature
-        if top_p is not None:
+        elif temperature is not None:
+            params["temperature"] = temperature
+        elif top_p is not None:
             params["top_p"] = top_p
 
         retries = kwargs.get("retries", self.retries)
