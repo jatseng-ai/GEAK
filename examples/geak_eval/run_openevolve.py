@@ -67,6 +67,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -465,6 +466,28 @@ def validate_commands_on_baseline(
                 return {"success": False, "error": msg,
                         "stdout": "\n".join(all_stdout),
                         "stderr": "\n".join(all_stderr)}
+            # _run_command runs in a subprocess whose env changes don't
+            # propagate back. Apply export statements to our env dict so
+            # subsequent CORRECTNESS/PROFILE commands see them.
+            stripped = cmd.strip()
+            if stripped.startswith("export "):
+                assignment = stripped[len("export "):]
+                eq_idx = assignment.find("=")
+                if eq_idx > 0:
+                    key = assignment[:eq_idx].strip()
+                    raw_val = assignment[eq_idx + 1:].strip()
+                    if raw_val.startswith('"') and raw_val.endswith('"'):
+                        raw_val = raw_val[1:-1]
+                    el                    if raw_val.startswith("'") and raw_val.endswith("'"):
+                        raw_val = raw_val[1:-1]
+                    def _expand(m):
+                        var = m.group(1) or m.group(2)
+                        return env.get(var, m.group(0))
+                    expanded = re.sub(
+                        r'\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)',
+                        _expand, raw_val,
+                    )
+                    env[key] = expanded
 
         # ---- CORRECTNESS ----
         for cmd in commands.get("correctness", []):
