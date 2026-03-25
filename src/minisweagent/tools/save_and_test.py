@@ -83,17 +83,10 @@ class SaveAndTestTool:
         ctx = self.context
         cwd = ctx.cwd
 
-        if self._is_git_repo(Path(cwd)):
-            result = subprocess.run(
-                "git add -N . && git diff -- . ':(exclude)traj.json' ':(exclude)*.log' ':(exclude).rocprofv3/' ':(exclude)__pycache__/' ':(exclude)*.pyc' ':(exclude).pytest_cache/' ':(exclude)*.egg-info/' ':(exclude)*.so' ':(exclude).geak_resolved/'",
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                shell=True,
-            )
-            return result.stdout
-
+        # Prefer explicit base_repo_path when set (worktree copies created by
+        # ParallelAgent).  This avoids false positives from _is_git_repo() when
+        # the worktree happens to live inside a parent git repository whose
+        # .gitignore would suppress `git add -N`.
         if ctx.base_repo_path and ctx.base_repo_path.exists():
             excludes = [".git", "__pycache__"]
             if ctx.patch_output_dir:
@@ -117,6 +110,22 @@ class SaveAndTestTool:
             )
             return result.stdout
 
+        if self._is_git_repo(Path(cwd)):
+            result = subprocess.run(
+                "git add -N . && git diff -- . ':(exclude)traj.json' ':(exclude)*.log' ':(exclude).rocprofv3/' ':(exclude)__pycache__/' ':(exclude)*.pyc' ':(exclude).pytest_cache/' ':(exclude)*.egg-info/' ':(exclude)*.so' ':(exclude).geak_resolved/'",
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                shell=True,
+            )
+            return result.stdout
+
+        self._log(
+            "[SaveAndTest] WARNING: Cannot compute patch — "
+            "not a git repo and no base_repo_path configured. "
+            "Patch will be empty."
+        )
         return ""
 
     def _run_test(self) -> tuple[str, bool, int]:

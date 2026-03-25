@@ -244,6 +244,7 @@ class DefaultAgent:
 
     def run(self, task: str, **kwargs) -> tuple[str, str]:
         """Run step() until agent is finished. Return exit status & message"""
+        self._setup_save_and_test_context()
         self.extra_template_vars |= {"task": task, **kwargs}
         self.messages = []
         self._traj_last_saved_idx = -1
