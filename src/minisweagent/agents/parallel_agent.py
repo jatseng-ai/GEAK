@@ -1082,6 +1082,15 @@ class ParallelAgent(DefaultAgent):
                                         capture_output=True, text=True, timeout=30)
                         if _diff.returncode == 0 and _diff.stdout.strip():
                             (task_patch_dir / "patch_0.patch").write_text(_diff.stdout)
+                            # Run benchmark to create patch_0_test.txt for SelectPatchAgent
+                            _bench = _sp.run(
+                                ["python3", "test_kernel_harness.py", "--full-benchmark"],
+                                cwd=str(wt_path), capture_output=True, text=True, timeout=180,
+                                env={**os.environ, "HIP_VISIBLE_DEVICES": hip_devices,
+                                     "PYTHONPATH": f"{wt_path}:{os.environ.get('PYTHONPATH', '')}"},
+                            )
+                            if _bench.returncode == 0:
+                                (task_patch_dir / "patch_0_test.txt").write_text(_bench.stdout)
                     except Exception:
                         pass
 
