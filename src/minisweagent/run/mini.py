@@ -192,7 +192,7 @@ def main(
             # Empty task, prompt user
             task_content = None
     
-    if not task_content:
+    if not task_content and not (kernel_url or preprocess_dir):
         console.print("[bold yellow]What do you want to do?")
         task_content = prompt_session.prompt(
             "",
@@ -260,8 +260,36 @@ def main(
     else:
         repo, test_command, metric, num_parallel, parsed_gpu_ids, patch_output, kernel_name = result
 
+    # ============ LLM-driven pipeline param extraction ============
+    # Only run if CLI flags haven't already set pipeline triggers
+    if task_content and kernel_url is None and preprocess_dir is None:
+        from minisweagent.run.utils.config_editor import prompt_missing_pipeline_params
+        from minisweagent.run.utils.task_parser import parse_pipeline_params
+
+        console.print("[bold cyan]Checking task for pipeline parameters...[/bold cyan]")
+        pipeline_params = parse_pipeline_params(task_content, model)
+
+        # Apply non-None extracted values (CLI flags still take priority)
+        if pipeline_params.get("heterogeneous") is not None and heterogeneous is None:
+            heterogeneous = pipeline_params["heterogeneous"]
+        if pipeline_params.get("max_rounds") is not None:
+            max_rounds = pipeline_params["max_rounds"]
+        if pipeline_params.get("start_round") is not None:
+            start_round = pipeline_params["start_round"]
+
+        # Prompt for missing required params (kernel_url)
+        pipeline_params, should_use_pipeline = prompt_missing_pipeline_params(
+            pipeline_params, console, yolo
+        )
+
+        if should_use_pipeline:
+            if pipeline_params.get("kernel_url"):
+                kernel_url = pipeline_params["kernel_url"]
+            if pipeline_params.get("preprocess_dir"):
+                preprocess_dir = Path(pipeline_params["preprocess_dir"])
+
     # ============ Pipeline Mode: preprocess -> orchestrate ============
-    # Triggered by: --preprocess-dir, --kernel-url, or auto-detected kernel path
+    # Triggered by: --preprocess-dir, --kernel-url, or LLM-extracted params
     _pipeline_kernel = kernel_url or (str(repo) if repo else None)
     _use_pipeline = preprocess_dir is not None or kernel_url is not None
 

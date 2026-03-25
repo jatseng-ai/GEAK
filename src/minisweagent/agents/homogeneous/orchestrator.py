@@ -117,6 +117,24 @@ def run_homogeneous_orchestrator(
                 if console else f"  Round {round_num} dispatch failed: {exc}"
             )
 
+        # 2b. Generate best_results.json for each task patch directory
+        # Pool mode (run_task_batch) does not invoke SelectPatchAgent, so
+        # best_results.json must be written deterministically before the
+        # postprocessor can find and verify candidates.
+        from minisweagent.run.postprocess.benchmark_parsing import rewrite_best_results
+
+        for task_dir in sorted(results_dir.iterdir()):
+            if not task_dir.is_dir() or task_dir.name == "worktrees":
+                continue
+            det = rewrite_best_results(task_dir)
+            if det:
+                _print(
+                    f"  Best patch ({task_dir.name}): {det.get('best_patch_id')} "
+                    f"({det.get('best_patch_speedup', 0):.4f}x)"
+                )
+            else:
+                _print(f"  No valid patches in {task_dir.name}")
+
         # 3. Evaluate via post_round_evaluate
         round_eval = post_round_evaluate(ctx, round_num, output_dir, _print)
         starting_patch = ctx.get("starting_patch")

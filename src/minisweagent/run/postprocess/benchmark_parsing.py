@@ -144,13 +144,33 @@ def _universal_latency_fallback(text: str) -> float | None:
     return candidates[-1] if candidates else None
 
 
+def _parse_task_runner_performance(text: str) -> float | None:
+    """Parse task_runner.py performance output: sum per-shape latencies.
+
+    Expected format::
+
+        Performance: 0.0027 ms (shape_0)
+        Performance: 0.0049 ms (shape_1)
+        ...
+
+    Returns total latency across all shapes, or None if no matches.
+    """
+    total = 0.0
+    count = 0
+    for m in re.finditer(r"Performance:\s*([\d.]+(?:e[+-]?\d+)?)\s*ms", text):
+        total += float(m.group(1))
+        count += 1
+    return total if count > 0 else None
+
+
 def _extract_latency(text: str) -> float | None:
     """Extract latency from benchmark output.
 
     Priority:
     1. GEAK_RESULT_LATENCY_MS=<number> (standardized marker, always correct)
     2. Legacy format parsers (TOTAL_KERNEL_TIME_MS, BENCHMARK_METRIC, etc.)
-    3. Universal fallback: last number near latency keywords in output
+    3. task_runner.py Performance: X ms (shape) format (sum across shapes)
+    4. Universal fallback: last number near latency keywords in output
     """
     m = re.search(r"GEAK_RESULT_LATENCY_MS=([\d.]+(?:e[+-]?\d+)?)", text)
     if m:
@@ -166,6 +186,9 @@ def _extract_latency(text: str) -> float | None:
     if val is not None:
         return val
     val = parse_google_benchmark_ms(text)
+    if val is not None:
+        return val
+    val = _parse_task_runner_performance(text)
     if val is not None:
         return val
 
