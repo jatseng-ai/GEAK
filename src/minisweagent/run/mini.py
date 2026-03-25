@@ -4,6 +4,7 @@
 # Read this first: https://mini-swe-agent.com/latest/usage/mini/  (usage)
 
 import copy
+import json
 import os
 import sys
 from io import StringIO
@@ -120,6 +121,12 @@ def main(
     # RAG knowledge retrieval
     rag: bool = typer.Option(False, "--rag", help="Enable RAG retrieval from AMD/NVIDIA knowledge base"),
     debug: bool = typer.Option(False, "-d", "--debug", help="Enable debug output (only with --rag)"),
+    # Pipeline orchestration flags
+    heterogeneous: bool | None = typer.Option(None, "--heterogeneous/--no-heterogeneous", help="Override auto-detected mode. Default: auto-detect from kernel type (HIP=homogeneous, Triton=heterogeneous).", rich_help_panel="Pipeline"),
+    max_rounds: int = typer.Option(3, "--max-rounds", help="Maximum optimization rounds. Set to 1 for single-round.", rich_help_panel="Pipeline"),
+    start_round: int = typer.Option(1, "--start-round", help="Round to resume from (1-based).", rich_help_panel="Pipeline"),
+    preprocess_dir: Path | None = typer.Option(None, "--preprocess-dir", help="Path to existing preprocessing artifacts. Skips auto-preprocessing.", rich_help_panel="Pipeline"),
+    kernel_url: str | None = typer.Option(None, "--kernel-url", help="Kernel URL or local path. Triggers full pipeline mode (preprocess -> orchestrate).", rich_help_panel="Pipeline"),
 ) -> Any:
     # fmt: on
     # Capture all print output to trajectory
@@ -249,11 +256,143 @@ def main(
     )
     if result == (None, None, None, None, None, None, None):
         console.print("[bold yellow]Continuing without automatic patch saving. You can still interact with the agent.[/bold yellow]")
-        # Keep original None values since user aborted
         repo, test_command, metric, num_parallel, parsed_gpu_ids, patch_output, kernel_name = None, None, None, None, [0], None, None
     else:
         repo, test_command, metric, num_parallel, parsed_gpu_ids, patch_output, kernel_name = result
 
+    # ============ Pipeline Mode: preprocess -> orchestrate ============
+    # Triggered by: --preprocess-dir, --kernel-url, or auto-detected kernel path
+    _pipeline_kernel = kernel_url or (str(repo) if repo else None)
+    _use_pipeline = preprocess_dir is not None or kernel_url is not None
+
+    if _use_pipeline:
+        from minisweagent.run.orchestrator import _probe_preprocess_dir, run_orchestrator
+
+        model_cfg = config.get("model", {})
+        _pipeline_output = patch_output or Path("geak_output")
+        _pipeline_output = Path(_pipeline_output)
+        _pipeline_output.mkdir(parents=True, exist_ok=True)
+
+        console.print("[bold cyan]--- GEAK Full Pipeline Mode ---[/bold cyan]")
+
+        # Step 1: Build preprocess_ctx
+        if preprocess_dir:
+            # Load existing artifacts
+            pp_dir = Path(preprocess_dir).resolve()
+            if not pp_dir.is_dir():
+                console.print(f"[red]ERROR: preprocess directory not found: {preprocess_dir}[/red]")
+                raise typer.Exit(1)
+
+            manifest_path = pp_dir / "preprocess_context.json"
+            if manifest_path.exists():
+                from minisweagent.run.pipeline_types import PreprocessContext
+                pc = PreprocessContext.from_dict(json.loads(manifest_path.read_text()))
+                preprocess_ctx: dict[str, Any] = {
+                    "kernel_path": pc.kernel_path,
+                    "repo_root": pc.repo_root,
+                    "harness_path": pc.harness_path,
+                    "output_dir": pc.preprocess_dir,
+                    "preprocess_dir": pc.preprocess_dir,
+                    "commandment_path": pc.commandment_path,
+                    "codebase_context_path": pc.codebase_context_path,
+                    "baseline_metrics_path": pc.baseline_metrics_path,
+                    "profiling_path": pc.profiling_result_path,
+                    "discovery": pc.discovery,
+                }
+            else:
+                logger.warning("preprocess_context.json not found, falling back to file probing")
+                pc = _probe_preprocess_dir(pp_dir)
+                preprocess_ctx = {
+                    "kernel_path": pc.kernel_path,
+                    "repo_root": pc.repo_root,
+                    "harness_path": pc.harness_path,
+                    "output_dir": pc.preprocess_dir,
+                    "preprocess_dir": pc.preprocess_dir,
+                    "commandment_path": pc.commandment_path,
+                    "codebase_context_path": pc.codebase_context_path,
+                    "baseline_metrics_path": pc.baseline_metrics_path,
+                    "profiling_path": pc.profiling_result_path,
+                    "discovery": pc.discovery,
+                }
+
+            # Load inline data from artifact files
+            if pc.commandment_path and Path(pc.commandment_path).exists():
+                preprocess_ctx["commandment"] = Path(pc.commandment_path).read_text()
+            if pc.baseline_metrics_path and Path(pc.baseline_metrics_path).exists():
+                preprocess_ctx["baseline_metrics"] = json.loads(Path(pc.baseline_metrics_path).read_text())
+            if pc.profiling_result_path and Path(pc.profiling_result_path).exists():
+                preprocess_ctx["profiling"] = json.loads(Path(pc.profiling_result_path).read_text())
+
+            console.print(f"[bold green]Loaded preprocessing artifacts from: {pp_dir}[/bold green]")
+        else:
+            # Run preprocessing automatically
+            from minisweagent.run.preprocess.preprocessor import run_preprocessor
+
+            _kernel_source = kernel_url or str(repo)
+            console.print(f"[dim]Kernel source: {_kernel_source}[/dim]")
+            console.print(f"[dim]Output dir: {_pipeline_output}[/dim]")
+
+            preprocess_ctx = run_preprocessor(
+                _kernel_source,
+                output_dir=_pipeline_output,
+                gpu_id=parsed_gpu_ids[0] if parsed_gpu_ids else 0,
+                model=model,
+                model_factory=lambda: get_model(model_name, config.get("model", {})),
+                console=console,
+                harness=None,
+                repo=repo,
+                eval_command=test_command,
+            )
+            preprocess_ctx.setdefault("preprocess_dir", str(_pipeline_output))
+            preprocess_ctx.setdefault("output_dir", str(_pipeline_output))
+
+            console.print("[bold green]Preprocessing complete.[/bold green]")
+
+        # Step 2: Auto-detect kernel type → set heterogeneous flag
+        if heterogeneous is None:
+            # Auto-detect from kernel type
+            _kernel_path = preprocess_ctx.get("kernel_path", "")
+            _discovery = preprocess_ctx.get("discovery") or {}
+            _kernel_info = _discovery.get("kernel") or {}
+            _kernel_type = _kernel_info.get("type")
+
+            if not _kernel_type and _kernel_path:
+                from minisweagent.agents.heterogeneous.task_generator import _infer_kernel_type
+                _kernel_type = _infer_kernel_type(Path(_kernel_path))
+
+            if _kernel_type == "triton":
+                heterogeneous = True
+                console.print(f"[bold cyan]Auto-detected kernel type: {_kernel_type} -> heterogeneous mode[/bold cyan]")
+            else:
+                heterogeneous = False
+                _ktype_display = _kernel_type or "unknown"
+                console.print(f"[bold cyan]Auto-detected kernel type: {_ktype_display} -> homogeneous mode[/bold cyan]")
+        else:
+            _mode_label = "heterogeneous" if heterogeneous else "homogeneous"
+            console.print(f"[bold cyan]Mode override: {_mode_label}[/bold cyan]")
+
+        # Step 3: Call run_orchestrator
+        console.print(f"[dim]Rounds: {start_round}-{max_rounds}, GPUs: {parsed_gpu_ids}[/dim]")
+
+        report = run_orchestrator(
+            preprocess_ctx=preprocess_ctx,
+            gpu_ids=parsed_gpu_ids or [0],
+            model=model,
+            model_factory=lambda: get_model(model_name, model_cfg),
+            output_dir=_pipeline_output,
+            max_rounds=max_rounds,
+            start_round=start_round,
+            heterogeneous=heterogeneous,
+            console=console,
+        )
+
+        console.print("\n[bold green]Pipeline complete.[/bold green]")
+        if report:
+            report_dict = report.to_dict() if hasattr(report, "to_dict") else report
+            console.print(f"[dim]{json.dumps(report_dict, indent=2, default=str)[:500]}[/dim]")
+        return None
+
+    # ============ Legacy Agent Mode (interactive / no pipeline) ============
     if create_test or not test_command:
         if not repo:
             raise ValueError("repo is required for --create-test or when test_command is missing. Please pass --repo.")
@@ -268,51 +407,39 @@ def main(
             log_dir=patch_output,
         )
         console.print(f"[bold green]Using UnitTestAgent test_command:[/bold green] {test_command}")
-    
-    # ============ Step 1: Choose base agent class ============
-    # Based on enable_strategies flag, select appropriate agent and template
+
+    # Choose base agent class
     if enable_strategies:
-        # Use strategy agent with mini_kernel_strategy_list.yaml template
         base_agent_class = StrategyInteractiveAgent
         console.print(f"[bold cyan]Using Strategy Agent with strategy file: {strategy_file}[/bold cyan]")
     else:
-        # Use interactive agent with mini_system_prompt.yaml template
-        # Choose between visual (Textual) and non-visual (Interactive) mode
         if visual == (os.getenv("MSWEA_VISUAL_MODE_DEFAULT", "false") == "false"):
             base_agent_class = TextualAgent
         else:
             base_agent_class = InteractiveAgent
         console.print(f"[bold cyan]Using Interactive Agent (visual={'on' if base_agent_class == TextualAgent else 'off'})[/bold cyan]")
-    
-    # Mode (yolo/confirm/human) is set via config and applies to all InteractiveAgent subclasses
-    
-    # ============ Step 2: Configure agent settings ============
+
+    # Configure agent settings
     agent_config = config.get("agent", {})
-    
-    # Add strategy manager settings
     agent_config["use_strategy_manager"] = enable_strategies
     if enable_strategies:
         agent_config["strategy_file_path"] = strategy_file
-    
-    # Configure save_patch settings (always enabled)
+
     agent_config["save_patch"] = True
     agent_config["test_command"] = test_command or config.get("patch", {}).get("test_command")
     patch_dir = patch_output or config.get("patch", {}).get("patch_output_dir") or (global_config_dir / "patches")
     agent_config["patch_output_dir"] = str(patch_dir)
     agent_config["metric"] = metric or config.get("patch", {}).get("metric")
-    
-    # Create log directory and prepare log file path
+
     log_dir = Path(patch_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     agent_log_file = log_dir / "mini_agent.log"
-    
-    # ============ Step 3: Use ParallelAgent (supports both single and parallel execution) ============
+
     agent_class = ParallelAgent
     agent_config["agent_class"] = base_agent_class
     agent_config["num_parallel"] = num_parallel or 1
     agent_config["gpu_ids"] = parsed_gpu_ids
-    
-    # Configure repo path for worktree management (unified for single and parallel)
+
     repo_path = repo or config.get("patch", {}).get("repo")
     if repo_path:
         p = Path(repo_path)
@@ -321,7 +448,7 @@ def main(
             if resolved is not None:
                 p = resolved
         agent_config["repo"] = str(p.resolve())
-    
+
     if num_parallel and num_parallel > 1:
         console.print(f"[bold cyan]Using Parallel Mode: {num_parallel} agents[/bold cyan]")
         console.print(f"[dim]GPU IDs: {parsed_gpu_ids}[/dim]")
@@ -332,15 +459,13 @@ def main(
     else:
         console.print("[bold cyan]Using Single Agent Mode[/bold cyan]")
         console.print(f"[dim]Using GPU: {parsed_gpu_ids[0]}[/dim]")
-        # HIP_VISIBLE_DEVICES is set by parallel_agent.py in run_parallel
         if agent_config.get("repo"):
             console.print(f"[dim]Repository: {agent_config['repo']}[/dim]")
-            
-    # Create and run agent
+
     agent = agent_class(model, env, **agent_config)
     agent.log_file = agent_log_file
     console.print(f"[dim]Agent log: {agent_log_file}[/dim]")
-    
+
     try:
         run_result = agent.run(
             task_content,
@@ -350,12 +475,10 @@ def main(
             model_factory=lambda: get_model(model_name, config.get("model", {})),
             env_factory=lambda: (MCPEnabledEnvironment if rag else LocalEnvironment)(**copy.deepcopy(_env_kwargs)),
         )
-        # ParallelAgent.run() returns BestPatchResult | None;
-        # sub-agents return (exit_status, result) tuples.
         if isinstance(run_result, tuple):
-            exit_status, result = run_result
+            _exit_status, result = run_result
         else:
-            exit_status, result = "Completed", run_result
+            _exit_status, result = "Completed", run_result
     except Exception as e:
         logger.error(f"Error running agent: {e}", exc_info=True)
 
