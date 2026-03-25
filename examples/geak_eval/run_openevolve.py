@@ -478,7 +478,7 @@ def validate_commands_on_baseline(
                     raw_val = assignment[eq_idx + 1:].strip()
                     if raw_val.startswith('"') and raw_val.endswith('"'):
                         raw_val = raw_val[1:-1]
-                    el                    if raw_val.startswith("'") and raw_val.endswith("'"):
+                    elif raw_val.startswith("'") and raw_val.endswith("'"):
                         raw_val = raw_val[1:-1]
                     def _expand(m):
                         var = m.group(1) or m.group(2)
