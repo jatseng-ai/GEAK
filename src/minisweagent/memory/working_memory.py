@@ -299,10 +299,13 @@ class WorkingMemory:
             "(5) Dispatch-path / wrapper changes LAST."
         )
 
-        best_str = f"{self.best_speedup:.2f}x"
-        if self.best_latency_ms > 0:
-            best_str += f" ({self.best_latency_ms:.4f}ms vs baseline {self.baseline_latency_ms:.4f}ms)"
-        parts.append(f"Kernel: {self.kernel_category} | Best: {best_str}")
+        if self.best_speedup > 0 and self.best_latency_ms > 0:
+            best_str = f"Best: {self.best_speedup:.2f}x ({self.best_latency_ms:.4f}ms vs baseline {self.baseline_latency_ms:.4f}ms)"
+        elif self.baseline_latency_ms > 0:
+            best_str = f"Baseline: {self.baseline_latency_ms:.4f}ms (no benchmark yet — run benchmark first)"
+        else:
+            best_str = "No baseline measured"
+        parts.append(f"Kernel: {self.kernel_category} | {best_str}")
         if self.best_strategy:
             category_suffix = f" [{self.best_change_category}]" if self.best_change_category else ""
             parts.append(f"Best strategy so far: {self.best_strategy}{category_suffix}")
