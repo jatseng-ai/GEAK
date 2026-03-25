@@ -142,6 +142,8 @@ agent:
   step_limit: 0.
   cost_limit: 0.
   mode: yolo
+  # When true, append skill catalog to system prompt and accept ```skills``` JSON to load SKILL.md bodies from GEAK/skills/
+  use_skills: true
 env:
   env:
     PAGER: cat

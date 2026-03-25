@@ -1,0 +1,80 @@
+# ROCprof Input Template for GPU Kernel Profiling
+# ================================================
+# This is a TEMPLATE FILE for MANUAL profiling.
+# It is NOT used by run_profiling.sh (which creates its own input files).
+#
+# Usage:
+#   1. Copy this template: cp scripts/rocprof_input.txt my_input.txt
+#   2. Customize metrics and filters as needed
+#   3. Run: rocprof -i my_input.txt -o output.csv python3 your_script.py
+#
+# Note: rocprof can only collect ~6-8 metrics per run due to HW limitations.
+#       Each "pmc:" line triggers a separate profiling pass.
+#
+# VGPR/SGPR/Scratch usage is automatically included in CSV output columns:
+#   - arch_vgpr: Vector GPR usage
+#   - accum_vgpr: Accumulator VGPR usage  
+#   - sgpr: Scalar GPR usage
+#   - scr: Scratch memory (>0 indicates register spilling)
+#   - lds: LDS memory usage
+
+# ============================================
+# INSTRUCTION METRICS
+# ============================================
+# Count of waves, VALU/SALU instructions, memory operations
+pmc: SQ_WAVES SQ_INSTS_VALU SQ_INSTS_SALU SQ_INSTS_VMEM_RD SQ_INSTS_VMEM_WR SQ_INSTS_LDS
+
+# ============================================
+# UTILIZATION METRICS
+# ============================================
+# VALUUtilization: % active threads (100% = no divergence)
+# VALUBusy: % time VALU processing (low = memory-bound)
+# MemUnitStalled: % time waiting for memory (high = memory bottleneck)
+pmc: VALUUtilization VALUBusy SALUBusy MemUnitStalled
+
+# ============================================
+# OCCUPANCY METRICS
+# ============================================
+# MeanOccupancyPerCU: waves per compute unit
+# SIMD_UTILIZATION: % time with active warps
+pmc: MeanOccupancyPerCU SIMD_UTILIZATION
+
+# ============================================
+# MEMORY BANDWIDTH
+# ============================================
+# FETCH_SIZE: KB read from memory
+# WRITE_SIZE: KB written to memory
+pmc: FETCH_SIZE WRITE_SIZE
+
+# ============================================
+# CACHE METRICS (L2 Cache - TCC)
+# ============================================
+# TCC_HIT_sum: L2 cache hits
+# TCC_MISS_sum: L2 cache misses
+# Calculate hit rate: TCC_HIT_sum / (TCC_HIT_sum + TCC_MISS_sum)
+pmc: TCC_HIT_sum TCC_MISS_sum TCP_TOTAL_CACHE_ACCESSES_sum
+
+# ============================================
+# LDS METRICS (Bank Conflicts)
+# ============================================
+# SQ_LDS_BANK_CONFLICT: Cycles stalled due to LDS bank conflicts
+# ALUStalledByLDS: % time ALU stalled waiting for LDS
+pmc: SQ_LDS_BANK_CONFLICT SQ_INSTS_LDS SQ_WAIT_INST_LDS ALUStalledByLDS
+
+# ============================================
+# KERNEL FILTER (optional - uncomment to use)
+# ============================================
+# Filter to profile only specific kernel(s):
+# kernel: your_kernel_name
+
+# ============================================
+# DISPATCH RANGE FILTER (optional)
+# ============================================
+# Filter by dispatch index range (useful for skipping warmup):
+# range: 5:10
+
+# ============================================
+# GPU INDEX FILTER (optional)
+# ============================================
+# Filter by GPU index (for multi-GPU systems):
+# gpu: 0

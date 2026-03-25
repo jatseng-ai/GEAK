@@ -10,6 +10,7 @@ from jinja2 import StrictUndefined, Template
 
 from minisweagent import Environment, Model
 from minisweagent.tools.tools_runtime import ToolRuntime
+from minisweagent.skills.skill_runtime import SkillRuntime
 
 
 @dataclass
@@ -30,6 +31,7 @@ class AgentConfig:
     step_limit: int = 0
     cost_limit: float = 3.0
     rag_config: dict | None = None
+    use_skills: bool = False
 
 
 OBSERVATION_MAX_LEN: int = 10000
@@ -90,20 +92,26 @@ class DefaultAgent:
         self.model = model
         self.env = env
         self.extra_template_vars = {}
+
         self.toolruntime = ToolRuntime(rag_config=self.config.rag_config)
+        self.skillruntime = SkillRuntime()
 
     def render_template(self, template: str, **kwargs) -> str:
         template_vars = asdict(self.config) | self.env.get_template_vars() | self.model.get_template_vars()
         all_vars = template_vars | self.extra_template_vars | kwargs
         return Template(template, undefined=StrictUndefined).render(**all_vars)
 
-    def add_message(self, role: str, content: str, **kwargs):
-        self.messages.append({"role": role, "content": content, **kwargs})
+    def add_message(self, role: str, content: str | None = None, **kwargs):
+        # Model may return content=None; APIs expect string message bodies.
+        text = "" if content is None else content
+        self.messages.append({"role": role, "content": text, **kwargs})
 
     def run(self, task: str, **kwargs) -> tuple[str, str]:
         """Run step() until agent is finished. Return exit status & message"""
         self.extra_template_vars |= {"task": task, **kwargs}
         self.messages = []
+        if self.config.use_skills:
+            self.config.system_template += self.skillruntime.build_system_prompt()
         self.add_message("system", self.render_template(self.config.system_template))
         self.add_message("user", self.render_template(self.config.instance_template))
         while True:
@@ -126,6 +134,7 @@ class DefaultAgent:
         response = self.model.query(self.messages)
         output = response["content"]
         msg_kwargs = {}
+        
         if response.get("tools") and not self._will_use_bash(response):
             msg_kwargs["tool_calls"] = response["tools"]
         if response.get("extra"):
@@ -135,12 +144,27 @@ class DefaultAgent:
 
     def get_observation(self, response: dict) -> dict:
         """Execute the action and return the observation."""
-        output = self.parse_action(response)
-
+        content = response.get("content") or ""
+        actions = re.findall(r"```bash\s*\n(.*?)\n```", content, re.DOTALL)
+        
+        tool_result = None
+        # if action is not a single bash command, we need to check if we have tools to call.
+        if len(actions) != 1:
+            if response.get("tools"):
+                from minisweagent.tools.submit import Submitted as ToolSubmitted
+                try:
+                    tool_result = self.toolruntime.dispatch(tool_call=response["tools"]["function"])
+                    self.has_finished(tool_result)
+                except ToolSubmitted as e:
+                    raise Submitted(str(e))
+            if not tool_result and not self.config.use_skills:
+                raise FormatError(self.render_template(self.config.format_error_template, actions=actions))
+        
+        output = tool_result
         last_msg = self.messages[-1] if self.messages else {}
         if last_msg.get("role") == "assistant" and last_msg.get("tool_calls") and response.get("tools"):
             tool_info = response["tools"]
-            result_content = json.dumps(output) if isinstance(output, dict) else str(output)
+            result_content = json.dumps(tool_result) if isinstance(tool_result, dict) else str(tool_result)
             result_content = truncate_observation(result_content)
             self.add_message(
                 "tool",
@@ -148,12 +172,20 @@ class DefaultAgent:
                 tool_call_id=tool_info.get("id", ""),
                 name=tool_info["function"]["name"],
             )
+            return tool_result
         else:
-            output_for_render = {
-                **output,
-                "output": truncate_observation(output.get("output", "")),
-            }
-            observation = self.render_template(self.config.action_observation_template, output=output_for_render)
+            parsed = self.parse_action(response)
+            if len(actions) == 1:
+                output = self.execute_action(parsed)
+            else:
+                output = {"output": "", "returncode": 0}
+            if self.config.use_skills:
+                skills_action = self.skillruntime.load_skill(response)
+                out_a = output.get("output") or ""
+                out_b = skills_action.get("output") or ""
+                output["output"] = out_a + out_b
+                output["returncode"] = max(output.get("returncode", 0), skills_action.get("returncode", 0))
+            observation = self.render_template(self.config.action_observation_template, output=output)
             self.add_message("user", observation)
         return output
 
@@ -167,20 +199,13 @@ class DefaultAgent:
 
     def parse_action(self, response: dict) -> dict:
         """Parse the action from the message. Returns the action."""
-        content = response.get("content", "")
-        actions = re.findall(r"```bash\s*\n(.*?)\n```", content, re.DOTALL) if content else []
+        content = response.get("content") or ""
+        actions = re.findall(r"```bash\s*\n(.*?)\n```", content, re.DOTALL)
         if len(actions) == 1:
-            return self.execute_action({"action": actions[0].strip(), **response})
-        if response.get("tools"):
-            from minisweagent.tools.submit import Submitted as ToolSubmitted
-
-            try:
-                result = self.toolruntime.dispatch(tool_call=response["tools"]["function"])
-                self.has_finished(result)
-            except ToolSubmitted as e:
-                raise Submitted(str(e))
-            return result
-        raise FormatError(self.render_template(self.config.format_error_template, actions=actions))
+            return {"action": actions[0].strip(), **response}
+        if len(actions) > 1:
+            raise FormatError(self.render_template(self.config.format_error_template, actions=actions))
+        return {**response}
 
     def execute_action(self, action: dict) -> dict:
         try:
