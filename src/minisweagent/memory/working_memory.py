@@ -80,6 +80,8 @@ class WorkingMemory:
     noise_floor_pct: float = 0.0
     consecutive_same_category: int = 0
     last_change_category: str = ""
+    consecutive_errors: int = 0
+    last_error_msg: str = ""
     notebook_dir: str | None = None
     notebook_writer_id: str = "default"
     best_strategy: str = ""
@@ -208,6 +210,18 @@ class WorkingMemory:
                         self.best_strategy = self.pending_strategy
                         self.best_change_category = self.pending_change_category
 
+        # Track consecutive errors for crash loop detection
+        if returncode != 0:
+            err_sig = output.strip().splitlines()[-1][:60] if output.strip() else "unknown"
+            if err_sig == self.last_error_msg:
+                self.consecutive_errors += 1
+            else:
+                self.consecutive_errors = 1
+                self.last_error_msg = err_sig
+        else:
+            self.consecutive_errors = 0
+            self.last_error_msg = ""
+
         if "Patch saved:" in output or "Test status:" in output:
             self.pending_strategy = ""
             self.pending_change_category = ""
@@ -314,7 +328,7 @@ class WorkingMemory:
         if self.strategies_failed:
             parts.append(f"Failed: {', '.join(self.strategies_failed[-3:])}")
 
-        # V2 Change 1: Profiler-to-architecture diagnosis (first 5 steps only)
+        # Architecture diagnosis: full detail for first 5 steps, then brief reminder
         if self.profiler_diagnosis and self.current_step <= 5:
             parts.append("")
             parts.append(self.profiler_diagnosis)
@@ -326,6 +340,16 @@ class WorkingMemory:
                 "Re-read profile.json. Look for: algorithmic shortcuts, fusion opportunities, "
                 "unnecessary memory copies (repeat_interleave), redundant ops, and only then "
                 "dispatch-path mismatches or unfused external library calls."
+            )
+
+        # Crash loop detection: repeated identical errors
+        if self.consecutive_errors >= 3:
+            parts.append(
+                f"[CRASH RECOVERY] Same error repeated {self.consecutive_errors}x: "
+                f"\"{self.last_error_msg[:50]}\". "
+                "STOP current approach. Try: (1) Read the kernel file fresh with cat, "
+                "(2) Use a completely different edit strategy, "
+                "(3) Run the test command directly to verify the environment works."
             )
 
         # V2 Change 2: Hard ceiling detector (replaces soft diminishing returns)
@@ -378,6 +402,15 @@ class WorkingMemory:
         if notebook_summary:
             parts.append("")
             parts.append(notebook_summary)
+
+        # Patch save enforcement: when agent beats baseline, demand immediate save
+        if self.best_speedup > 1.0 and self.best_latency_ms > 0:
+            parts.append(
+                f"[SAVE PATCH NOW] You achieved {self.best_speedup:.2f}x speedup "
+                f"({self.best_latency_ms:.4f}ms vs baseline {self.baseline_latency_ms:.4f}ms). "
+                "Run save_and_test IMMEDIATELY to persist this result. "
+                "Unsaved improvements are LOST when the session ends."
+            )
 
         # V2 Change 7: Early submission trigger
         if self.steps_since_improvement > 8 and self.current_step > self.max_steps * 0.4:

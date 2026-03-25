@@ -233,12 +233,18 @@ class WorkingNotebook:
                         "category": category,
                         "best_speedup": 0.0,
                         "last_status": "",
+                        "fail_reason": "",
                     },
                 )
                 if kind == "attempt":
                     info["attempts"] += 1
                 if category and not info.get("category"):
                     info["category"] = category
+                # Track failure reasons
+                tag = str(event.get("tag") or "")
+                msg = str(event.get("message") or "")
+                if tag == "FAIL" and msg and not info.get("fail_reason"):
+                    info["fail_reason"] = msg[:60]
 
             overall_speedup = _safe_float(event.get("overall_speedup"))
             if overall_speedup is not None and strategy:
@@ -308,10 +314,21 @@ class WorkingNotebook:
                 category = f"/{info['category']}" if info.get("category") else ""
                 best = float(info.get("best_speedup", 0.0))
                 attempts = int(info.get("attempts", 0))
+                status = info.get("last_status", "")
+                outcome = ""
+                if best > 1.01:
+                    outcome = ", IMPROVED"
+                elif best > 0 and best < 0.98:
+                    outcome = ", REGRESSED"
+                elif attempts > 0 and (best == 0 or 0.98 <= best <= 1.01):
+                    outcome = ", NO GAIN"
+                fail_note = ""
+                if outcome in (", REGRESSED", ", NO GAIN") and info.get("fail_reason"):
+                    fail_note = f" — {info['fail_reason']}"
                 if best > 0:
-                    tried_bits.append(f"{strategy}{category} ({attempts} try, best {best:.4f}x)")
+                    tried_bits.append(f"{strategy}{category} ({attempts} try, best {best:.4f}x{outcome}{fail_note})")
                 else:
-                    tried_bits.append(f"{strategy}{category} ({attempts} try)")
+                    tried_bits.append(f"{strategy}{category} ({attempts} try{outcome}{fail_note})")
             if tried_bits:
                 lines.append("Tried families: " + "; ".join(tried_bits))
 
