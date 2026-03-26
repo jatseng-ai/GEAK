@@ -451,6 +451,18 @@ def validate_commands_on_baseline(
         env["GEAK_GPU_DEVICE"] = str(gpu_device)
         env["HIP_VISIBLE_DEVICES"] = str(gpu_device)
 
+        # Ensure subprocesses can find packages (e.g. torch) that are
+        # available to this process via sys.path but might not be on
+        # PYTHONPATH yet (common in container venvs where torch lives
+        # in /opt/venv/lib/.../site-packages).
+        existing_pp = env.get("PYTHONPATH", "")
+        extra_sp = [p for p in sys.path
+                    if "site-packages" in p and p not in existing_pp]
+        if extra_sp:
+            env["PYTHONPATH"] = os.pathsep.join(
+                extra_sp + ([existing_pp] if existing_pp else [])
+            )
+
         all_stdout = []
         all_stderr = []
 
