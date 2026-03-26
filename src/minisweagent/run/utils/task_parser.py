@@ -103,7 +103,8 @@ Here is the task content:
                 resolved = _resolve_path_case(repo_path)
                 if resolved is not None:
                     result["repo"] = str(resolved.resolve())
-        
+        if Path(result["repo"]).exists() and Path(result["repo"]).is_file():
+            result["repo"] = None
         return result
         
     except (json.JSONDecodeError, Exception) as e:
