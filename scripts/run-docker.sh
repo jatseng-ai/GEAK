@@ -187,7 +187,7 @@ docker run -d \
     --network=host \
     --device=/dev/kfd \
     --device=/dev/dri \
-    --device=/dev/infiniband \
+    $([ -e /dev/infiniband ] && echo '--device=/dev/infiniband') \
     --group-add=video \
     --ipc=host \
     --cap-add=SYS_PTRACE \
