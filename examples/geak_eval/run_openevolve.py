@@ -206,7 +206,6 @@ def profile_with_metrix(
             "kernel-profile",
             f"python {kernel_path} --profile",
             "--gpu-devices", str(gpu_device),
-            "--auto-select",
             "--replays", "5",
         ]
         logger.info(f"  Profile: {' '.join(cmd)}")
@@ -388,7 +387,7 @@ def build_evaluation_commands(
         # Warm-up 2: ensure GPU is at steady power state
         "python ${GEAK_WORK_DIR}/kernel.py --profile > /dev/null 2>&1 || true",
         # Actual Metrix profiling (now with warm cache + steady GPU)
-        'kernel-profile "python ${GEAK_WORK_DIR}/kernel.py --profile" --gpu-devices ${GEAK_GPU_DEVICE} --auto-select --replays 5',
+        'kernel-profile "python ${GEAK_WORK_DIR}/kernel.py --profile" --gpu-devices ${GEAK_GPU_DEVICE} --replays 5',
     ]
 
     return {
