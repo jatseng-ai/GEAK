@@ -441,6 +441,13 @@ def validate_commands_on_baseline(
         # Copy baseline kernel into the temp work_dir
         dst = os.path.join(work_dir, kernel_basename)
         shutil.copy2(kernel_path, dst)
+        # CORRECTNESS commands reference ${GEAK_WORK_DIR}/kernel.py (the
+        # standard candidate filename used by OpenEvolve at runtime).
+        # For validation we compare baseline-vs-baseline, so also place
+        # the baseline at kernel.py.
+        kernel_py = os.path.join(work_dir, "kernel.py")
+        if not os.path.exists(kernel_py):
+            shutil.copy2(kernel_path, kernel_py)
 
         # Build env with GEAK_WORK_DIR, GEAK_KERNEL_DIR, and GEAK_GPU_DEVICE
         # GEAK_GPU_DEVICE is the variable used in COMMANDMENT.md commands
