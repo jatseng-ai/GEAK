@@ -25,6 +25,26 @@ class SaveAndTestContext:
     patch_counter: int = 0
 
 
+def _normalize_diff_paths(diff_output: str, base_path: str, worktree_path: str) -> str:
+    """Rewrite absolute paths from ``diff -ruN`` to git-style ``a/``/``b/`` format.
+
+    This makes patches portable so ``git apply -p1`` works in any copy of the
+    base directory (e.g. the evaluation worktree).
+    """
+    base = base_path.rstrip("/") + "/"
+    wt = worktree_path.rstrip("/") + "/"
+    lines = []
+    for line in diff_output.splitlines(True):
+        if line.startswith("diff -ruN"):
+            line = line.replace(base, "a/").replace(wt, "b/")
+        elif line.startswith("--- ") and base in line:
+            line = line.replace(base, "a/")
+        elif line.startswith("+++ ") and wt in line:
+            line = line.replace(wt, "b/")
+        lines.append(line)
+    return "".join(lines)
+
+
 class SaveAndTestTool:
     """Tool to save patch and run performance test."""
 
@@ -108,7 +128,11 @@ class SaveAndTestTool:
                 text=True,
                 timeout=30,
             )
-            return result.stdout
+            return _normalize_diff_paths(
+                result.stdout,
+                str(ctx.base_repo_path.resolve()),
+                str(Path(cwd).resolve()),
+            )
 
         if self._is_git_repo(Path(cwd)):
             result = subprocess.run(
