@@ -1,7 +1,7 @@
 # OpenEvolve configuration for AIG-Eval GPU kernels
 # Used with: python run_openevolve.py <kernel_path> --config config.yaml
 
-max_iterations: 10
+max_iterations: 20
 checkpoint_interval: 5
 log_level: "INFO"
 
@@ -10,13 +10,13 @@ llm:
   sampling:
     fn: "random"
   models:
-    - name: "claude-haiku-4-5"
+    - name: "claude-sonnet-4-6"
       backend: "anthropic"
       weight: 1.0
       api_key: null  # Set via ANTHROPIC_API_KEY env var
 
   evaluator_models:
-    - name: "claude-haiku-4-5"
+    - name: "claude-sonnet-4-6"
       backend: "anthropic"
       weight: 1.0
       api_key: null
