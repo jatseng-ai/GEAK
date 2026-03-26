@@ -913,7 +913,27 @@ def _evaluate_round_best(
             _profile_fn = getattr(profile_kernel, "fn", profile_kernel)
             if harness_path:
                 prev_pythonpath = os.environ.get("PYTHONPATH", "")
-                os.environ["PYTHONPATH"] = f"{eval_worktree}:{repo_root}:{prev_pythonpath}"
+                prev_ld = os.environ.get("LD_LIBRARY_PATH", "")
+
+                pp_parts = [str(eval_worktree), str(repo_root)]
+                ld_parts: list[str] = []
+                for _cand in (Path(repo_root), Path(repo_root).parent):
+                    _bpkg = _cand / "build-fly" / "python_packages"
+                    _mlibs = _bpkg / "flydsl" / "_mlir" / "_mlir_libs"
+                    if _mlibs.is_dir():
+                        pp_parts.insert(0, str(_bpkg))
+                        pp_parts.insert(1, str(_cand))
+                        ld_parts.append(str(_mlibs))
+                        break
+
+                os.environ["PYTHONPATH"] = os.pathsep.join(
+                    pp_parts + ([prev_pythonpath] if prev_pythonpath else [])
+                )
+                if ld_parts:
+                    os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
+                        ld_parts + ([prev_ld] if prev_ld else [])
+                    )
+
                 try:
                     profile_result = _profile_fn(
                         command=f"python {harness_path} --profile",
@@ -927,6 +947,11 @@ def _evaluate_round_best(
                         os.environ["PYTHONPATH"] = prev_pythonpath
                     else:
                         os.environ.pop("PYTHONPATH", None)
+                    if ld_parts:
+                        if prev_ld:
+                            os.environ["LD_LIBRARY_PATH"] = prev_ld
+                        else:
+                            os.environ.pop("LD_LIBRARY_PATH", None)
 
                 if baseline_metrics and profile_result:
                     from minisweagent.baseline_metrics import build_baseline_metrics

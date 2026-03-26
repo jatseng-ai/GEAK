@@ -66,7 +66,13 @@ class MCPToolBridge:
 
     def set_env(self, env: dict[str, str]) -> None:
         """Merge extra env vars into server config (must be called before first tool call)."""
-        self.server_config.setdefault("env", {}).update(env)
+        existing = self.server_config.setdefault("env", {})
+        _PATH_KEYS = {"PYTHONPATH", "LD_LIBRARY_PATH"}
+        for k, v in env.items():
+            if k in _PATH_KEYS and k in existing:
+                existing[k] = f"{v}{os.pathsep}{existing[k]}"
+            else:
+                existing[k] = v
 
     def tool(self, tool_name: str) -> _BoundTool:
         """Return a callable that invokes *tool_name* on this MCP server."""
@@ -188,7 +194,10 @@ class MCPToolBridge:
 
         env = {"PYTHONPATH": pythonpath}
 
-        for key in ("GEAK_MCP_MODEL", "ANTHROPIC_API_KEY", "AMD_LLM_API_KEY", "LLM_GATEWAY_KEY"):
+        for key in (
+            "GEAK_MCP_MODEL", "ANTHROPIC_API_KEY", "AMD_LLM_API_KEY", "LLM_GATEWAY_KEY",
+            "LD_LIBRARY_PATH", "PATH",
+        ):
             val = os.environ.get(key)
             if val:
                 env[key] = val
