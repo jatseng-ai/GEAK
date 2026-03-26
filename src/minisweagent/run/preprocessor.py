@@ -384,6 +384,7 @@ def run_preprocessor(
                 harness_path=harness,
                 repo_root=repo_root,
                 kernel_language=_kl,
+                kernel_type=_ktype,
             )
             _print("  COMMANDMENT.md generated")
         except Exception as exc:
