@@ -14,7 +14,8 @@ endif
 HIPCC_FLAGS = -shared -fPIC -O3 \
               --offload-arch=$(ARCH) \
               -I$(CK_INCLUDE) \
-              -std=c++17
+              -std=c++17 \
+              -MMD -MP
 
 .PHONY: all baseline optimized clean
 
@@ -25,11 +26,14 @@ optimized: liboptimized.so
 
 libbaseline.so: baseline.cpp
 	@echo "Building baseline for $(ARCH)..."
-	$(HIPCC) $(HIPCC_FLAGS) -o $@ $<
+	$(HIPCC) $(HIPCC_FLAGS) -MF $(basename $@).d -o $@ $<
 
 liboptimized.so: optimized.cpp
 	@echo "Building optimized for $(ARCH)..."
-	$(HIPCC) $(HIPCC_FLAGS) -o $@ $<
+	$(HIPCC) $(HIPCC_FLAGS) -MF $(basename $@).d -o $@ $<
 
 clean:
-	rm -f libbaseline.so liboptimized.so
+	rm -f libbaseline.so liboptimized.so libbaseline.d liboptimized.d
+
+# Pulled in after first compile; lists all headers the compiler actually opened.
+-include libbaseline.d liboptimized.d

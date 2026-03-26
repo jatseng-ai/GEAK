@@ -152,7 +152,7 @@ def benchmark_kernel(
     nrepeat: int = 20,
 ) -> float:
     """Time the kernel. Returns average time in ms, or -1 if unsupported."""
-    x = torch.randn(shape, dtype=torch.float16, device="cpu").to("cuda")
+    x = torch.randn(shape, dtype=torch.float16, device="cpu").to("cuda") # IMPORTANT: Use device='cpu' then .to('cuda') to avoid polluting the profiler trace with RNG/memset kernels.
     y = torch.empty_like(x)
 
     ms = call_kernel(
@@ -188,7 +188,7 @@ def mode_correctness(base_lib, opt_lib, shapes: list[list[int]], reduce_dim_arg:
 
     for shape in shapes:
         reduce_dim = reduce_dim_arg if reduce_dim_arg >= 0 else len(shape) - 1
-        x = torch.randn(shape, dtype=torch.float16, device="cpu").to("cuda")
+        x = torch.randn(shape, dtype=torch.float16, device="cpu").to("cuda") # IMPORTANT: Use device='cpu' then .to('cuda') to avoid polluting the profiler trace with RNG/memset kernels.
 
         y_base = run_kernel_output(base_lib, x, reduce_dim)
         if y_base is None:
@@ -217,7 +217,7 @@ def mode_profile(opt_lib, shapes: list[list[int]], reduce_dim_arg: int) -> None:
     """Run optimized kernel once per shape for profiler capture."""
     for shape in shapes:
         reduce_dim = reduce_dim_arg if reduce_dim_arg >= 0 else len(shape) - 1
-        x = torch.randn(shape, dtype=torch.float16, device="cpu").to("cuda")
+        x = torch.randn(shape, dtype=torch.float16, device="cpu").to("cuda") # IMPORTANT: Use device='cpu' then .to('cuda') to avoid polluting the profiler trace with RNG/memset kernels.
         y = torch.empty_like(x)
         ms = call_kernel(opt_lib, x, y, [reduce_dim], alpha=1.0, beta=0.0, time_kernel=False)
         if ms < 0:
