@@ -25,6 +25,26 @@ class SaveAndTestContext:
     patch_counter: int = 0
 
 
+def _normalize_diff_paths(diff_output: str, base_path: str, worktree_path: str) -> str:
+    """Rewrite absolute paths from ``diff -ruN`` to git-style ``a/``/``b/`` format.
+
+    This makes patches portable so ``git apply -p1`` works in any copy of the
+    base directory (e.g. the evaluation worktree).
+    """
+    base = base_path.rstrip("/") + "/"
+    wt = worktree_path.rstrip("/") + "/"
+    lines = []
+    for line in diff_output.splitlines(True):
+        if line.startswith("diff -ruN"):
+            line = line.replace(base, "a/").replace(wt, "b/")
+        elif line.startswith("--- ") and base in line:
+            line = line.replace(base, "a/")
+        elif line.startswith("+++ ") and wt in line:
+            line = line.replace(wt, "b/")
+        lines.append(line)
+    return "".join(lines)
+
+
 class SaveAndTestTool:
     """Tool to save patch and run performance test."""
 
@@ -83,17 +103,10 @@ class SaveAndTestTool:
         ctx = self.context
         cwd = ctx.cwd
 
-        if self._is_git_repo(Path(cwd)):
-            result = subprocess.run(
-                "git add -N . && git diff -- . ':(exclude)traj.json' ':(exclude)*.log' ':(exclude).rocprofv3/' ':(exclude)__pycache__/' ':(exclude)*.pyc' ':(exclude).pytest_cache/' ':(exclude)*.egg-info/' ':(exclude)*.so' ':(exclude).geak_resolved/'",
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                shell=True,
-            )
-            return result.stdout
-
+        # Prefer explicit base_repo_path when set (worktree copies created by
+        # ParallelAgent).  This avoids false positives from _is_git_repo() when
+        # the worktree happens to live inside a parent git repository whose
+        # .gitignore would suppress `git add -N`.
         if ctx.base_repo_path and ctx.base_repo_path.exists():
             excludes = [".git", "__pycache__"]
             if ctx.patch_output_dir:
@@ -115,8 +128,28 @@ class SaveAndTestTool:
                 text=True,
                 timeout=30,
             )
+            return _normalize_diff_paths(
+                result.stdout,
+                str(ctx.base_repo_path.resolve()),
+                str(Path(cwd).resolve()),
+            )
+
+        if self._is_git_repo(Path(cwd)):
+            result = subprocess.run(
+                "git add -N . && git diff -- . ':(exclude)traj.json' ':(exclude)*.log' ':(exclude).rocprofv3/' ':(exclude)__pycache__/' ':(exclude)*.pyc' ':(exclude).pytest_cache/' ':(exclude)*.egg-info/' ':(exclude)*.so' ':(exclude).geak_resolved/'",
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                shell=True,
+            )
             return result.stdout
 
+        self._log(
+            "[SaveAndTest] WARNING: Cannot compute patch — "
+            "not a git repo and no base_repo_path configured. "
+            "Patch will be empty."
+        )
         return ""
 
     def _run_test(self) -> tuple[str, bool, int]:
