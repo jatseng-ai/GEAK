@@ -178,6 +178,29 @@ def compute_bandwidth(shape: list[int], time_ms: float) -> float:
     return bytes_moved / time_ms / 1e6  # bytes / ms = KB/s, / 1e6 = GB/s
 
 
+# -- GPU warmup ---------------------------------------------------------------
+
+_GPU_WARMUP_ROUNDS = 3
+
+
+def _gpu_warmup(base_lib, opt_lib, shapes, reduce_dim_arg: int):
+    """Run the largest shape untimed on both kernels to bring GPU to peak clock.
+
+    MI300X (and other GPUs with DVFS) idle at low frequency and need sustained
+    work to ramp up.  CK's 5 warmup iterations inside the timed region only
+    produce microseconds of work for small shapes — not enough.  This function
+    forces a ramp-up *before* any timed work begins.
+    """
+    warmup_shape = shapes[-1]  # shapes are sorted small→large
+    reduce_dim = reduce_dim_arg if reduce_dim_arg >= 0 else len(warmup_shape) - 1
+    x = torch.randn(warmup_shape, dtype=torch.float16, device="cpu").to("cuda")
+    y = torch.empty_like(x)
+    for _ in range(_GPU_WARMUP_ROUNDS):
+        call_kernel(base_lib, x, y, [reduce_dim], time_kernel=False)
+        call_kernel(opt_lib, x, y, [reduce_dim], time_kernel=False)
+    torch.cuda.synchronize()
+
+
 # -- Mode implementations ----------------------------------------------------
 
 
@@ -229,6 +252,8 @@ def mode_benchmark(
     warmup: int, nrepeat: int, base_label: str, opt_label: str,
 ) -> bool:
     """Benchmark both kernels on shapes. Returns True if all shapes ran."""
+    _gpu_warmup(base_lib, opt_lib, shapes, reduce_dim_arg)
+
     opt_times_us: list[float] = []
     base_times_us: list[float] = []
     speedups: list[float] = []
