@@ -146,23 +146,25 @@ class DefaultAgent:
         """Execute the action and return the observation."""
         content = response.get("content") or ""
         actions = re.findall(r"```bash\s*\n(.*?)\n```", content, re.DOTALL)
-        
-        tool_result = None
-        # if action is not a single bash command, we need to check if we have tools to call.
-        if len(actions) != 1:
-            if response.get("tools"):
-                from minisweagent.tools.submit import Submitted as ToolSubmitted
-                try:
-                    tool_result = self.toolruntime.dispatch(tool_call=response["tools"]["function"])
-                    self.has_finished(tool_result)
-                except ToolSubmitted as e:
-                    raise Submitted(str(e))
-            if not tool_result and not self.config.use_skills:
-                raise FormatError(self.render_template(self.config.format_error_template, actions=actions))
-        
-        output = tool_result
-        last_msg = self.messages[-1] if self.messages else {}
-        if last_msg.get("role") == "assistant" and last_msg.get("tool_calls") and response.get("tools"):
+        has_bash = len(actions) == 1
+        has_tool = bool(response.get("tools"))
+        has_skill = self._will_use_skill(response)
+        action_kinds = int(has_bash) + int(has_tool) + int(has_skill)
+
+        if len(actions) > 1 or action_kinds != 1:
+            msg = self.render_template(self.config.format_error_template, actions=actions)
+            msg += "\nDo not mix bash blocks, tool calls, and skills blocks in the same response."
+            raise FormatError(msg)
+
+        if has_tool:
+            from minisweagent.tools.submit import Submitted as ToolSubmitted
+
+            try:
+                tool_result = self.toolruntime.dispatch(tool_call=response["tools"]["function"])
+                self.has_finished(tool_result)
+            except ToolSubmitted as e:
+                raise Submitted(str(e))
+
             tool_info = response["tools"]
             result_content = json.dumps(tool_result) if isinstance(tool_result, dict) else str(tool_result)
             result_content = truncate_observation(result_content)
@@ -173,20 +175,21 @@ class DefaultAgent:
                 name=tool_info["function"]["name"],
             )
             return tool_result
+
+        if has_bash:
+            output = self.execute_action(self.parse_action(response))
         else:
-            parsed = self.parse_action(response)
-            if len(actions) == 1:
-                output = self.execute_action(parsed)
-            else:
-                output = {"output": "", "returncode": 0}
-            if self.config.use_skills:
-                skills_action = self.skillruntime.load_skill(response)
-                out_a = output.get("output") or ""
-                out_b = skills_action.get("output") or ""
-                output["output"] = out_a + out_b
-                output["returncode"] = max(output.get("returncode", 0), skills_action.get("returncode", 0))
-            observation = self.render_template(self.config.action_observation_template, output=output)
-            self.add_message("user", observation)
+            output = {"output": "", "returncode": 0}
+
+        if has_skill:
+            skills_action = self.skillruntime.load_skill(response)
+            out_a = output.get("output") or ""
+            out_b = skills_action.get("output") or ""
+            output["output"] = out_a + out_b
+            output["returncode"] = max(output.get("returncode", 0), skills_action.get("returncode", 0))
+
+        observation = self.render_template(self.config.action_observation_template, output=output)
+        self.add_message("user", observation)
         return output
 
     @staticmethod
@@ -196,6 +199,14 @@ class DefaultAgent:
         if not content:
             return False
         return len(re.findall(r"```bash\s*\n(.*?)\n```", content, re.DOTALL)) == 1
+
+    @staticmethod
+    def _will_use_skill(response: dict) -> bool:
+        """Return True when the response contains a skill-loading block."""
+        content = response.get("content", "")
+        if not content:
+            return False
+        return bool(re.search(r"```skills\s*(\{.*?\})\s*```", content, re.DOTALL))
 
     def parse_action(self, response: dict) -> dict:
         """Parse the action from the message. Returns the action."""

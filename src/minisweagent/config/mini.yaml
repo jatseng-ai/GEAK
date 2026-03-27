@@ -170,4 +170,4 @@ model:
       verbosity: low
 # RAG MCP toggle: comment out the following two lines to disable RAG
 rag:
-  enable_subagent: false
+  enable_subagent: true
