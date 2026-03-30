@@ -52,8 +52,8 @@ When adapting this recipe for a different CK kernel family, change three things:
 2. **`load_kernel()` and `call_kernel()`** in `test_harness.py` -- mirror the new C ABI with ctypes
 3. **Shape lists** -- replace with shapes appropriate for the kernel family
 
-Everything else (`compile.py`, `Makefile`, 4-mode structure, baseline-vs-optimized
-comparison, benchmark reporting) stays identical.
+Everything else (`compile.py`, `Makefile`, 4-mode structure, `_gpu_warmup()` function and its call at 
+the start of `mode_benchmark()`, baseline-vs-optimized comparison, benchmark reporting) stays identical.
 
 ## Directory structure
 
