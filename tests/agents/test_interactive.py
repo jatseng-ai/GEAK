@@ -63,13 +63,11 @@ def _make_model(outputs_spec: list[tuple[str, list[dict]]], **kwargs) -> Determi
 
 @pytest.fixture
 def default_config():
-    """Load default agent config from config/mini.yaml"""
-    config_path = Path("src/minisweagent/config/mini.yaml")
+    """Load default agent config from config/default.yaml"""
+    config_path = Path("src/minisweagent/config/default.yaml")
     with open(config_path) as f:
         config = yaml.safe_load(f)
-    agent_config = config["agent"]
-    agent_config.pop("mode", None)
-    return agent_config
+    return config["agent"]
 
 
 @pytest.fixture

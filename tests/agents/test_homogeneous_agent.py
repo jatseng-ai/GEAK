@@ -70,7 +70,7 @@ class TestHomogeneousAgentConfig:
     @pytest.fixture
     def homogeneous_config(self):
         """Load the homogeneous agent config."""
-        config_path = Path("src/minisweagent/config/mini_kernel_strategy_list.yaml")
+        config_path = Path("src/minisweagent/config/homogeneous_agent.yaml")
         with open(config_path) as f:
             return yaml.safe_load(f)
 
@@ -88,9 +88,21 @@ class TestHomogeneousAgentConfig:
         assert "instance_template" in homogeneous_config["agent"]
         assert "{{task}}" in homogeneous_config["agent"]["instance_template"]
 
-    def test_config_no_legacy_tools_section(self, homogeneous_config):
-        """Test that legacy top-level tools section is no longer used."""
-        assert "tools" not in homogeneous_config
+    def test_config_has_tools_section(self, homogeneous_config):
+        """Test that config has tools section."""
+        assert "tools" in homogeneous_config
+
+    def test_config_tools_strategy_manager(self, homogeneous_config):
+        """Test that strategy_manager is configured."""
+        tools = homogeneous_config.get("tools", {})
+        assert "strategy_manager" in tools
+        assert tools["strategy_manager"] is True
+
+    def test_config_tools_strategy_file(self, homogeneous_config):
+        """Test that strategy_file is configured."""
+        tools = homogeneous_config.get("tools", {})
+        assert "strategy_file" in tools
+        assert tools["strategy_file"] == ".optimization_strategies.md"
 
 
 # --- Test run_homogeneous_agent ---
@@ -120,6 +132,10 @@ class TestRunHomogeneousAgent:
                 "instance_template": "Task: {{task}}",
                 "step_limit": 10,
                 "cost_limit": 10.0,
+            },
+            "tools": {
+                "strategy_manager": False,
+                "strategy_file": ".optimization_strategies.md",
             },
             "parallel": {
                 "num_parallel": 1,
@@ -164,6 +180,7 @@ class TestRunHomogeneousAgent:
                 env=mock_env,
                 env_class=LocalEnvironment,
                 env_kwargs={},
+                tools_settings=base_config["tools"],
                 agent_config={
                     "system_template": "Test",
                     "instance_template": "{{task}}",
@@ -175,6 +192,8 @@ class TestRunHomogeneousAgent:
 
     def test_run_homogeneous_agent_with_strategy_manager_enabled(self, mock_model, mock_env, base_config, temp_repo):
         """Test that strategy agent is used when strategy_manager is enabled."""
+        base_config["tools"]["strategy_manager"] = True
+
         with patch("minisweagent.agents.homogeneous.homogeneous_agent.ParallelAgent") as mock_parallel:
             mock_agent = MagicMock()
             mock_agent.run.return_value = BestPatchResult(
@@ -191,39 +210,7 @@ class TestRunHomogeneousAgent:
                 env=mock_env,
                 env_class=LocalEnvironment,
                 env_kwargs={},
-                agent_config={
-                    "system_template": "Test",
-                    "instance_template": "{{task}}",
-                    "step_limit": 10,
-                    "cost_limit": 10.0,
-                },
-                repo=temp_repo,
-            )
-
-            mock_parallel.assert_called_once()
-            call_kwargs = mock_parallel.call_args[1]
-            from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
-
-            assert call_kwargs.get("agent_class") == StrategyInteractiveAgent
-
-    def test_run_homogeneous_agent_with_strategy_manager_disabled(self, mock_model, mock_env, base_config, temp_repo):
-        """Test that strategy interactive agent is used when strategy_manager is disabled."""
-        with patch("minisweagent.agents.homogeneous.homogeneous_agent.ParallelAgent") as mock_parallel:
-            mock_agent = MagicMock()
-            mock_agent.run.return_value = BestPatchResult(
-                agent_id=0,
-                patch_id="patch_0",
-                test_output="Test passed",
-            )
-            mock_parallel.return_value = mock_agent
-
-            run_homogeneous_agent(
-                config=base_config,
-                task_content="Test task",
-                model=mock_model,
-                env=mock_env,
-                env_class=LocalEnvironment,
-                env_kwargs={},
+                tools_settings=base_config["tools"],
                 agent_config={
                     "system_template": "Test",
                     "instance_template": "{{task}}",
@@ -235,11 +222,49 @@ class TestRunHomogeneousAgent:
 
             # Verify ParallelAgent was called
             mock_parallel.assert_called_once()
-            # GEAK homogeneous mode always uses StrategyInteractiveAgent.
+            # Check that agent_class is StrategyInteractiveAgent
             call_kwargs = mock_parallel.call_args[1]
             from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
 
             assert call_kwargs.get("agent_class") == StrategyInteractiveAgent
+
+    def test_run_homogeneous_agent_with_strategy_manager_disabled(self, mock_model, mock_env, base_config, temp_repo):
+        """Test that interactive agent is used when strategy_manager is disabled."""
+        base_config["tools"]["strategy_manager"] = False
+
+        with patch("minisweagent.agents.homogeneous.homogeneous_agent.ParallelAgent") as mock_parallel:
+            mock_agent = MagicMock()
+            mock_agent.run.return_value = BestPatchResult(
+                agent_id=0,
+                patch_id="patch_0",
+                test_output="Test passed",
+            )
+            mock_parallel.return_value = mock_agent
+
+            run_homogeneous_agent(
+                config=base_config,
+                task_content="Test task",
+                model=mock_model,
+                env=mock_env,
+                env_class=LocalEnvironment,
+                env_kwargs={},
+                tools_settings=base_config["tools"],
+                agent_config={
+                    "system_template": "Test",
+                    "instance_template": "{{task}}",
+                    "step_limit": 10,
+                    "cost_limit": 10.0,
+                },
+                repo=temp_repo,
+            )
+
+            # Verify ParallelAgent was called
+            mock_parallel.assert_called_once()
+            # Check that agent_class is InteractiveAgent
+            call_kwargs = mock_parallel.call_args[1]
+            from minisweagent.agents.interactive import InteractiveAgent
+
+            assert call_kwargs.get("agent_class") == InteractiveAgent
 
     def test_run_homogeneous_agent_num_parallel_from_param(self, mock_model, mock_env, base_config, temp_repo):
         """Test that num_parallel parameter takes precedence."""
@@ -255,6 +280,7 @@ class TestRunHomogeneousAgent:
                 env=mock_env,
                 env_class=LocalEnvironment,
                 env_kwargs={},
+                tools_settings=base_config["tools"],
                 agent_config={
                     "system_template": "Test",
                     "instance_template": "{{task}}",
@@ -282,6 +308,7 @@ class TestRunHomogeneousAgent:
                 env=mock_env,
                 env_class=LocalEnvironment,
                 env_kwargs={},
+                tools_settings=base_config["tools"],
                 agent_config={
                     "system_template": "Test",
                     "instance_template": "{{task}}",
@@ -312,6 +339,7 @@ class TestRunHomogeneousAgent:
                     env=mock_env,
                     env_class=LocalEnvironment,
                     env_kwargs={},
+                    tools_settings=base_config["tools"],
                     agent_config={
                         "system_template": "Test",
                         "instance_template": "{{task}}",
@@ -338,6 +366,7 @@ class TestRunHomogeneousAgent:
                 env=mock_env,
                 env_class=LocalEnvironment,
                 env_kwargs={},
+                tools_settings=base_config["tools"],
                 agent_config={
                     "system_template": "Test",
                     "instance_template": "{{task}}",
@@ -503,6 +532,10 @@ class TestHomogeneousAgentErrors:
     def base_config(self):
         return {
             "agent": {},
+            "tools": {
+                "strategy_manager": False,
+                "strategy_file": ".optimization_strategies.md",
+            },
             "parallel": {},
         }
 
@@ -516,6 +549,7 @@ class TestHomogeneousAgentErrors:
                 env=mock_env,
                 env_class=LocalEnvironment,
                 env_kwargs={},
+                tools_settings=base_config["tools"],
                 agent_config={
                     "system_template": "Test",
                     "instance_template": "{{task}}",
@@ -572,8 +606,8 @@ class TestHomogeneousAgentConsoleOutput:
             )
             yield repo_path
 
-    def test_console_output_no_crash(self, temp_repo):
-        """Test that homogeneous agent runs without crashing when console is provided."""
+    def test_console_output_configuration_summary(self, temp_repo):
+        """Test that configuration summary is printed to console."""
         from io import StringIO
 
         from rich.console import Console
@@ -583,6 +617,10 @@ class TestHomogeneousAgentConsoleOutput:
 
         config = {
             "agent": {},
+            "tools": {
+                "strategy_manager": False,
+                "strategy_file": ".optimization_strategies.md",
+            },
             "parallel": {
                 "num_parallel": 2,
             },
@@ -601,6 +639,7 @@ class TestHomogeneousAgentConsoleOutput:
                 env=LocalEnvironment(),
                 env_class=LocalEnvironment,
                 env_kwargs={},
+                tools_settings=config["tools"],
                 agent_config={
                     "system_template": "Test",
                     "instance_template": "{{task}}",
@@ -610,7 +649,8 @@ class TestHomogeneousAgentConsoleOutput:
                 console=console,
             )
 
-        mock_parallel.assert_called_once()
+        output_str = output.getvalue()
+        assert "Configuration Summary" in output_str or "Parallel agents" in output_str
 
 
 # --- Marker for slow tests ---
