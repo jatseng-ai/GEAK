@@ -94,6 +94,8 @@ class DefaultAgent:
         self.extra_template_vars = {}
 
         self.toolruntime = ToolRuntime(rag_config=self.config.rag_config)
+        if hasattr(self.model, "set_tools"):
+            self.model.set_tools(self.toolruntime.get_tools_schema())
         self.skillruntime = SkillRuntime()
 
     def render_template(self, template: str, **kwargs) -> str:

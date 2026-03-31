@@ -192,3 +192,9 @@ examples/matmul_kernel/kernel.py
 HIP_Shared_Memory_Optimization_Best_Practices.md
 hip_shared_memory_best_practices.md
 logs/
+.specstory/
+CLAUDE.md
+baseline_metrics.json
+optimized_silu.hip.cpp
+profile.json
+tests/test_data/
