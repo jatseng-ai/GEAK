@@ -1,4 +1,5 @@
 # Copyright(C) [2026] Advanced Micro Devices, Inc. All rights reserved. Portions of this file consist of AI-generated content.
+# SPDX-License-Identifier: Apache-2.0
 
 """MCPToolBridge -- expose MCP server tools as sync callables for ToolRuntime.
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import os
 import sys
 import threading
 from pathlib import Path
@@ -178,10 +180,23 @@ class MCPToolBridge:
         module_name = server_name.replace("-", "_")
         src_dir = mcp_dir / "src"
 
+        # Include parent process site-packages so subprocesses can find
+        # transitive deps (e.g. cachetools for fastmcp) even when
+        # --system-site-packages doesn't propagate (Singularity/Apptainer).
+        site_pkgs = [p for p in sys.path if "site-packages" in p]
+        pythonpath = os.pathsep.join([str(src_dir)] + site_pkgs)
+
+        env = {"PYTHONPATH": pythonpath}
+
+        for key in ("GEAK_MCP_MODEL", "ANTHROPIC_API_KEY", "AMD_LLM_API_KEY", "LLM_GATEWAY_KEY"):
+            val = os.environ.get(key)
+            if val:
+                env[key] = val
+
         return {
             "command": ["python3", "-m", f"{module_name}.server"],
             "cwd": str(mcp_dir),
-            "env": {"PYTHONPATH": str(src_dir)},
+            "env": env,
         }
 
 

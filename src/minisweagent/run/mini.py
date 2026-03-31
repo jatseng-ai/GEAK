@@ -1,4 +1,5 @@
 # Modifications Copyright(C)[2026] Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 #!/usr/bin/env python3
 
@@ -583,6 +584,7 @@ def main(
             max_rounds=max_rounds,
             heterogeneous=heterogeneous,
             console=console,
+            agent_config=config.get("agent"),
         )
 
         console.print("\n[bold green]Pipeline complete.[/bold green]")

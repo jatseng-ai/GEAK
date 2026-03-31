@@ -3,20 +3,18 @@
 
 #!/usr/bin/env python3
 """
-Simple Vector Add Kernel - Baseline for GEAK Agent Testing
+Simple Vector Add Kernel -- AIG-Eval interface variant.
 
-This is an UNOPTIMIZED baseline Triton kernel for testing the GEAK agent.
-The agent should:
-1. Discover this kernel
-2. Create test cases automatically
-3. Create benchmarks automatically
-4. Generate benchmark/baseline/metrics.json
-5. Run optimizer to improve performance
-
-No tests, no benchmarks included - agent creates everything from scratch.
+Same unoptimized Triton kernel as kernel.py, but implements the full
+AIG-Eval interface required by OpenEvolve's auto-build mode:
+  - triton_op / torch_op   (kernel wrappers)
+  - EVAL_CONFIGS            (correctness check input sizes)
+  - get_inputs(*config)     (tensor factory for correctness checks)
+  - --profile CLI flag      (profiling-friendly execution)
 
 Usage:
-    mini -m claude-sonnet-4.5 -t "Optimize this kernel" --yolo
+    python kernel_aig_eval.py              # run + correctness check
+    python kernel_aig_eval.py --profile    # profiling-friendly run
 """
 
 import torch
@@ -34,7 +32,7 @@ def add_kernel(
 ):
     """
     Simple unoptimized vector addition kernel.
-    
+
     Baseline characteristics:
     - Fixed BLOCK_SIZE (no autotuning)
     - No warp/stage tuning
@@ -46,7 +44,7 @@ def add_kernel(
     block_start = pid * BLOCK_SIZE
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
-    
+
     x = tl.load(x_ptr + offsets, mask=mask)
     y = tl.load(y_ptr + offsets, mask=mask)
     output = x + y
@@ -54,29 +52,18 @@ def add_kernel(
 
 
 def triton_add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """
-    Add two tensors using Triton kernel.
-    
-    Args:
-        x: First input tensor
-        y: Second input tensor
-        
-    Returns:
-        Sum of x and y
-    """
     assert x.is_cuda and y.is_cuda
     assert x.shape == y.shape
-    
+
     x = x.contiguous()
     y = y.contiguous()
     output = torch.empty_like(x)
     n_elements = x.numel()
-    
-    # Fixed BLOCK_SIZE - not optimized!
+
     def grid(meta):
         return (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
     add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
-    
+
     return output
 
 
@@ -85,15 +72,43 @@ def torch_add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return x + y
 
 
-# Exports for agent discovery
+# ---------------------------------------------------------------------------
+# AIG-Eval interface exports
+# ---------------------------------------------------------------------------
+
 triton_op = triton_add
 torch_op = torch_add
 
+EVAL_CONFIGS = [
+    (1024,),
+    (4096,),
+    (65536,),
+    (1_000_000,),
+    (16_000_000,),
+]
+
+
+def get_inputs(n):
+    """Create input tensors for a given vector size."""
+    x = torch.randn(n, device="cuda", dtype=torch.float32)
+    y = torch.randn(n, device="cuda", dtype=torch.float32)
+    return x, y
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Vector add kernel")
+    parser.add_argument("--profile", action="store_true",
+                        help="Run in profiling mode (skip correctness check)")
+    args = parser.parse_args()
+
     size = 1_000_000
-    x = torch.randn(size, device="cuda", dtype=torch.float32)
-    y = torch.randn(size, device="cuda", dtype=torch.float32)
+    x, y = get_inputs(size)
 
     # Warm-up (compiles the kernel)
     output = triton_add(x, y)
@@ -103,6 +118,7 @@ if __name__ == "__main__":
     output = triton_add(x, y)
     torch.cuda.synchronize()
 
-    expected = torch_add(x, y)
-    assert torch.allclose(output, expected), "Correctness check failed!"
-    print(f"add_kernel: {size} elements, output[0]={output[0].item():.4f}")
+    if not args.profile:
+        expected = torch_add(x, y)
+        assert torch.allclose(output, expected), "Correctness check failed!"
+        print(f"add_kernel: {size} elements, output[0]={output[0].item():.4f}")

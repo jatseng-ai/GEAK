@@ -1,4 +1,5 @@
 # Copyright(C) [2026] Advanced Micro Devices, Inc. All rights reserved. Portions of this file consist of AI-generated content.
+# SPDX-License-Identifier: Apache-2.0
 
 """Dispatch helpers: run task files via ParallelAgent pool mode.
 
@@ -274,6 +275,7 @@ def run_task_batch(
     model_factory,
     *,
     console=None,
+    extra_agent_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run a batch of task files via ParallelAgent pool mode.
 
@@ -289,6 +291,10 @@ def run_task_batch(
         Callable returning a new model instance.
     console:
         Optional Rich console.
+    extra_agent_config:
+        Optional agent-level config (system_template, instance_template,
+        cost_limit, etc.) to merge into the agent config dict.  Sourced
+        from the merged YAML ``config["agent"]`` section.
 
     Returns
     -------
@@ -317,6 +323,7 @@ def run_task_batch(
     results_dir.mkdir(parents=True, exist_ok=True)
 
     agent_config: dict[str, Any] = {
+        **(extra_agent_config or {}),
         "save_patch": True,
     }
 

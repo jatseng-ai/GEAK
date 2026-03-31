@@ -1,4 +1,5 @@
 # Copyright(C) [2026] Advanced Micro Devices, Inc. All rights reserved. Portions of this file consist of AI-generated content.
+# SPDX-License-Identifier: Apache-2.0
 
 """Orchestrator: LLM-driven agent that generates, dispatches, and manages
 optimisation tasks across available GPUs.
@@ -576,6 +577,13 @@ def _setup_eval_worktree(repo_root: str, patch_file: str, output_dir: Path) -> P
         )
     else:
         shutil.copytree(str(repo), str(eval_dir), dirs_exist_ok=True)
+        # Init as git repo so git-apply works for patches from non-git workdirs
+        subprocess.run(["git", "init", "-q"], cwd=str(eval_dir), capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(eval_dir), capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "baseline", "--allow-empty"],
+            cwd=str(eval_dir), capture_output=True,
+        )
 
     patch_path = Path(patch_file)
     if patch_path.exists() and patch_path.stat().st_size > 0:
@@ -958,6 +966,7 @@ def _run_homogeneous_orchestrator(
     _print,
     console,
     model_factory=None,
+    agent_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the orchestrator in homogeneous mode.
 
@@ -1039,6 +1048,7 @@ def _run_homogeneous_orchestrator(
                 output_dir=results_dir,
                 model_factory=model_factory,
                 console=console,
+                extra_agent_config=agent_config,
             )
         except Exception as exc:
             _print(f"  [yellow]Round {round_num} dispatch failed: {exc}[/yellow]")
@@ -1237,6 +1247,7 @@ def run_orchestrator(
     start_round: int = 1,
     heterogeneous: bool = False,
     console=None,
+    agent_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the orchestrator agent loop.
 
@@ -1283,6 +1294,7 @@ def run_orchestrator(
         return _run_homogeneous_orchestrator(
             preprocess_ctx, gpu_ids, _out, max_rounds, start_round, _print, console,
             model_factory=model_factory,
+            agent_config=agent_config,
         )
 
     # Build DiscoveryResult from preprocessor's discovery dict

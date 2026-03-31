@@ -1,4 +1,5 @@
 # Copyright(C) [2026] Advanced Micro Devices, Inc. All rights reserved. Portions of this file consist of AI-generated content.
+# SPDX-License-Identifier: Apache-2.0
 
 """
 Automated Test Discovery MCP Server
@@ -19,6 +20,8 @@ import textwrap
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+
+_DEFAULT_MODEL = os.environ.get("GEAK_MCP_MODEL", "claude-sonnet-4.5")
 
 # Initialize MCP server
 mcp = FastMCP(
@@ -388,7 +391,7 @@ def _llm_finalize_discovery(
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4.5",
+            model=_DEFAULT_MODEL,
             max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
