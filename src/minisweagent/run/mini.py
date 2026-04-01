@@ -444,6 +444,7 @@ def main(
             output_dir=preprocess_output_dir,
             max_rounds=max_rounds or config.get("orchestrator", {}).get("max_rounds"),
             heterogeneous=True,
+            agent_config=dict(config.get("agent", {})),
             console=console,
         )
         return _final_report_to_bestpatchresult(report)

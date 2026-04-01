@@ -36,6 +36,7 @@ def run_orchestrator(
     max_rounds: int | None = None,
     start_round: int = 1,
     heterogeneous: bool = DEFAULT_HETEROGENEOUS,
+    agent_config: dict[str, Any] | None = None,
     console=None,
 ) -> dict[str, Any]:
     """Run the orchestrator agent loop.
@@ -59,6 +60,10 @@ def run_orchestrator(
     heterogeneous:
         If True, use LLM-generated diverse tasks per round.
         If False (default), use homogeneous mode where all agents get the same task.
+    agent_config:
+        Agent-level settings from the merged YAML ``config["agent"]``
+        section.  Forwarded to ``run_task_batch()`` via the heterogeneous
+        orchestrator context so sub-agents receive the full configuration.
     console:
         Optional Rich console for progress messages.
     """
@@ -89,6 +94,7 @@ def run_orchestrator(
         start_round,
         _print,
         console,
+        agent_config=agent_config,
     )
 
 

@@ -231,6 +231,7 @@ def tool_dispatch_tasks(
             gpu_ids=gpu_ids,
             output_dir=results_base,
             model_factory=ctx.get("model_factory"),
+            extra_agent_config=ctx.get("agent_config"),
         )
         all_results.append(
             {

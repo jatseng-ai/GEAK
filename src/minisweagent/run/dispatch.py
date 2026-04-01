@@ -278,6 +278,7 @@ def run_task_batch(
     model_factory,
     *,
     console=None,
+    extra_agent_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run a batch of task files via ParallelAgent pool mode.
 
@@ -293,6 +294,11 @@ def run_task_batch(
         Callable returning a new model instance.
     console:
         Optional Rich console.
+    extra_agent_config:
+        Agent-level settings from the merged YAML ``config["agent"]``
+        section (system_template, instance_template, cost_limit, …).
+        Merged into the base agent_config so that sub-agents receive
+        the full configuration instead of only ``{"save_patch": True}``.
 
     Returns
     -------
@@ -322,9 +328,10 @@ def run_task_batch(
     results_dir = Path(output_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    agent_config: dict[str, Any] = {
-        "save_patch": True,
-    }
+    agent_config: dict[str, Any] = {"save_patch": True}
+    if extra_agent_config:
+        agent_config.update(extra_agent_config)
+        agent_config["save_patch"] = True
 
     # Pre-seed GEAK_REPO_ROOT and GEAK_HARNESS so COMMANDMENT commands
     # can reference them as variables (no hardcoded paths).
@@ -440,6 +447,7 @@ def run_from_task(
     model_factory=None,
     *,
     console=None,
+    extra_agent_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run a single task file. Python-callable wrapper around geak --from-task.
 
@@ -458,4 +466,5 @@ def run_from_task(
         output_dir=out,
         model_factory=model_factory,
         console=console,
+        extra_agent_config=extra_agent_config,
     )

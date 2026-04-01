@@ -173,6 +173,8 @@ def run_heterogeneous_orchestrator(
     start_round: int,
     _print,
     console,
+    *,
+    agent_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the heterogeneous orchestrator with LLM-driven tool calling.
 
@@ -209,6 +211,7 @@ def run_heterogeneous_orchestrator(
         "model_factory": model_factory,
         "agent_class": StrategyInteractiveAgent,
         "toolruntime": toolruntime,
+        "agent_config": agent_config,
     }
 
     tools_schema = build_tools_schema(toolruntime)
