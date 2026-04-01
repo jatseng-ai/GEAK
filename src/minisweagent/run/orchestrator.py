@@ -883,28 +883,27 @@ def _evaluate_round_best(
                 pass
 
         try:
-            from minisweagent.run.pipeline_helpers import _ensure_mcp_importable
+            from minisweagent.run.pipeline_helpers import _ensure_mcp_importable, harness_path_in_worktree
 
             _ensure_mcp_importable()
             from profiler_mcp.server import profile_kernel
 
             _profile_fn = getattr(profile_kernel, "fn", profile_kernel)
-            if harness_path:
-                prev_pythonpath = os.environ.get("PYTHONPATH", "")
-                os.environ["PYTHONPATH"] = f"{eval_worktree}:{repo_root}:{prev_pythonpath}"
-                try:
-                    profile_result = _profile_fn(
-                        command=f"python {harness_path} --profile",
-                        backend="metrix",
-                        num_replays=3,
-                        quick=True,
-                        gpu_devices=str(gpu_id),
-                    )
-                finally:
-                    if prev_pythonpath:
-                        os.environ["PYTHONPATH"] = prev_pythonpath
-                    else:
-                        os.environ.pop("PYTHONPATH", None)
+            if harness_path and eval_worktree:
+                worktree_harness = harness_path_in_worktree(harness_path, repo_root, eval_worktree)
+                run_sh = Path(eval_worktree) / "run.sh"
+                if run_sh.exists():
+                    profile_cmd = f"{run_sh} {worktree_harness} --profile"
+                else:
+                    profile_cmd = f"python {worktree_harness} --profile"
+
+                profile_result = _profile_fn(
+                    command=profile_cmd,
+                    backend="metrix",
+                    num_replays=3,
+                    quick=True,
+                    gpu_devices=str(gpu_id),
+                )
 
                 if baseline_metrics and profile_result:
                     from minisweagent.baseline_metrics import build_baseline_metrics

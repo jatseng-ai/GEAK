@@ -194,11 +194,13 @@ def _generate_simple(
     if kernel_type.lower() == "ck":
         setup_section = (
             "printf '#!/bin/bash\\nexport PYTHONPATH=%s:%s:${PYTHONPATH}\\n"
+            "cd %s\\n"
             "rm -rf libbaseline.so liboptimized.so\\n"
             "python3 compile.py\\n"
             "export HIP_VISIBLE_DEVICES=%s\\n"
             'exec python3 "$@"\\n\' '
-            '"${GEAK_WORK_DIR}" "${GEAK_REPO_ROOT}" "${GEAK_GPU_DEVICE}" '
+            '"${GEAK_WORK_DIR}" "${GEAK_REPO_ROOT}" '
+            '"$(dirname ${GEAK_HARNESS})" "${GEAK_GPU_DEVICE}" '
             "> ${GEAK_WORK_DIR}/run.sh && chmod +x ${GEAK_WORK_DIR}/run.sh"
         )
     elif kernel_language == "cpp":
