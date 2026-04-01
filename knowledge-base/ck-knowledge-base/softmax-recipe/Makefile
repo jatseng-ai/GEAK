@@ -5,7 +5,7 @@
 # Direct usage: make ARCH=gfx950 [target]
 
 HIPCC      ?= /opt/rocm/bin/hipcc
-CK_INCLUDE  = ../../../include
+CK_INCLUDE ?= /opt/rocm/include
 
 ifndef ARCH
   $(error ARCH not set. Use compile.py for auto-detection, or: make ARCH=gfx950)
