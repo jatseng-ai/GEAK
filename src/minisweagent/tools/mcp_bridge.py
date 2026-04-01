@@ -19,6 +19,8 @@ import asyncio
 import atexit
 import json
 import logging
+import os
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -202,10 +204,16 @@ class MCPToolBridge:
         module_name = server_name.replace("-", "_")
         src_dir = mcp_dir / "src"
 
+        # Include parent process site-packages so subprocesses can find
+        # transitive deps (e.g. cachetools for fastmcp) even when
+        # --system-site-packages doesn't propagate (Singularity/Apptainer).
+        site_pkgs = [p for p in sys.path if "site-packages" in p]
+        pythonpath = os.pathsep.join([str(src_dir)] + site_pkgs)
+
         return {
             "command": ["python3", "-m", f"{module_name}.server"],
             "cwd": str(mcp_dir),
-            "env": {"PYTHONPATH": str(src_dir)},
+            "env": {"PYTHONPATH": pythonpath},
         }
 
 
