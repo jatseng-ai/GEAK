@@ -6,8 +6,8 @@ temperature: 1.0
 # agent
 max_perf_debug_num: 5
 mem_file: null #Resuming from Checkpoints
-descendant_num: 2 #5 #offspring
-iteration_num: 20 #0 #10
+descendant_num: 1 #5 #offspring
+iteration_num: 10 
 ancestor_num: 5   #ancestor number of perf_candidates used to generate descendant
 mutation: false
 gpu_id: 7

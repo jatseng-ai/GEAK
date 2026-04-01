@@ -131,8 +131,12 @@ def main(
     config = yaml.safe_load(base_config_path.read_text())
     
     # 2. Select and merge template based on enable_strategies flag
+    enable_geak_kernel_llm = os.environ["USE_KERNEL_LLM"]
     if enable_strategies:
-        template_name = "mini_kernel_strategy_list.yaml"
+        if enable_geak_kernel_llm:
+            template_name = "mini_kernel_strategy_list_kernel_llm.yaml"
+        else:
+            template_name = "mini_kernel_strategy_list.yaml"
     else:
         template_name = "mini_system_prompt.yaml"
     

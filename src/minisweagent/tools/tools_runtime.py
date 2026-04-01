@@ -10,6 +10,11 @@ from minisweagent.tools.submit import SubmitTool
 
 current_dir = os.path.dirname(__file__)
 json_path = os.path.join(current_dir, "tools.json")
+use_kernel_llm_flag=os.environ["USE_KERNEL_LLM"]
+if use_kernel_llm_flag:
+    from minisweagent.tools.geak_kernel_llm import GEAK_kernel_llm
+    json_path = os.path.join(current_dir, "tools_kernel_llm.json")
+
 with open(json_path,"r",encoding="utf-8") as f:
     _all_tools = json.load(f)
 
@@ -50,7 +55,8 @@ class ToolRuntime:
                 filepath=strategy_file, 
                 on_change_callback=on_strategy_change
             )
-        
+        if use_kernel_llm_flag:
+            self._tool_table["geak_kernel_llm"] = GEAK_kernel_llm()
         # Store settings for tools list generation
         self.use_strategy_manager = use_strategy_manager
     

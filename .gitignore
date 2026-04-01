@@ -4,6 +4,10 @@ preds.json
 *.traj.json
 .env
 traj.json
+run_test.sh
+silu/
+device_search_n/
+check_prompt/
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python

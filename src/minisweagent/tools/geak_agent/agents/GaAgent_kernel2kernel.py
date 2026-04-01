@@ -21,6 +21,8 @@ from geak_agent.models.Gemini import GeminiModel
 from geak_agent.prompts import prompt_for_reflection_hip
 from minisweagent.tools.geak_agent.models.VLLM import VLLMModel
 from pathlib import Path
+import random
+import time
 
 class GaAgent_kernel2kernel(Reflexion_Oneshot):
     def __init__(self, config_path):
@@ -36,8 +38,8 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
             logger.info(f"{self.config.model_id} model is not supported. You can add your model according to script in models or use model existed.")
             sys.exit(1)
         super().__init__(model, self.config.mem_file, self.config.descendant_num)
-        self.generator = VLLMModel()
-        #self.generator = ClaudeModel(model_id="claude-opus-4.5", api_key=self.config.api_key)
+
+        #self.generator = ClaudeModel(model_id="claude-opus-4.6", api_key=self.config.api_key)
 
         self.dtw_threshold = 0.05
         self.max_trial_num = 3
@@ -75,6 +77,7 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
 
         raw_codes =None
         ps = ProblemState
+        ps.instruction = "Please optimize the following HIP kernel/function for better performance on the ROCm platform (MI250 GPU).\n    MI250 specs: 208KB LDS per Compute Unit (CU), 64 CUs total.\n\nYou will receive only a single kernel/function from the .hip file.\n    You may only modify the function body, but you must output the entire function including its signature.\n\nAllowed:\n\nRewrite or optimize the function body only.\n\n    Add local variables, shared memory, unrolling, vectorized I/O, etc.\n\nReorder code inside the function.\n\nAdd comments inside the function.\n\nNot Allowed:\n\nDo NOT change the function name.\n\n    Do NOT change the function signature or parameter types.\n\nDo NOT add, remove, or modify any code outside this function.\n\nNo helper functions\n\nNo new includes\n\nNo new kernels\n\n    No changes to launch configuration\n\nDo NOT assume access to any code outside this function.\n\nOptimization guidelines (apply those that fit):\n\nChunked/tiled processing using registers or LDS\n\n    Shared-memory buffering (LDS)\n\nDelayed stores to shared memory\n\nVectorized loads/stores (float2/float4/uint4/etc.)\n\nLoop unrolling\n\nBound checks for variable sizes\n\nMinimize warp/wavefront divergence\n\n    Increase ILP via interleaving independent ops\n\nReduce LDS/register usage for higher occupancy\n\nFavor coalesced memory and AMD wavefront-friendly access patterns\n\nFuse operations where possible\n\n    Use compiler hints like #pragma unroll\n\nHard Requirements:\n\nReturn the full function, including the exact original function signature.\n\nOnly modify code inside the function body.\n\n    Preserve algorithmic correctness and bitwise-equivalent outputs.\n\nMaintains existing formatting and comments unless improving them.\n\nCode must be compilable and runnable."
         if mem_file is None:
             tmp_mem = Memory(ps=ps, 
                             call_err_msg=None,
@@ -151,7 +154,7 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
                         related_prompt += "\n" + file_code
         return related_prompt
 
-    def run(self, code_path=None, test_case=None, kernel_func_name=None, define_dict=None):
+    def run(self, gpu_id=None, code_path=None, test_case=None, kernel_func_name=None, define_dict=None, **kwargs):
         """
         Args:
             
@@ -175,105 +178,81 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
                 self.memories.ps.ori_full_code = full_code
         self.memories.ps.file_path = code_path
         self.memories.ps.test_code = test_case
-       
-        #cody should modify instruction!
-        self.memories.ps.instruction = "Please optimize the following HIP kernel/function for better performance on the ROCm platform (MI250 GPU).\n\
-    MI250 specs: 208KB LDS per Compute Unit (CU), 64 CUs total.\n\nYou will receive only a single kernel/function from the .hip file.\n\
-    You may only modify the function body, but you must output the entire function including its signature.\n\nAllowed:\n\nRewrite or optimize the function body only.\n\n\
-    Add local variables, shared memory, unrolling, vectorized I/O, etc.\n\nReorder code inside the function.\n\nAdd comments inside the function.\n\nNot Allowed:\n\nDo NOT change the function name.\n\n\
-    Do NOT change the function signature or parameter types.\n\nDo NOT add, remove, or modify any code outside this function.\n\nNo helper functions\n\nNo new includes\n\nNo new kernels\n\n\
-    No changes to launch configuration\n\nDo NOT assume access to any code outside this function.\n\nOptimization guidelines (apply those that fit):\n\nChunked/tiled processing using registers or LDS\n\n\
-    Shared-memory buffering (LDS)\n\nDelayed stores to shared memory\n\nVectorized loads/stores (float2/float4/uint4/etc.)\n\nLoop unrolling\n\nBound checks for variable sizes\n\nMinimize warp/wavefront divergence\n\n\
-    Increase ILP via interleaving independent ops\n\nReduce LDS/register usage for higher occupancy\n\nFavor coalesced memory and AMD wavefront-friendly access patterns\n\nFuse operations where possible\n\n\
-    Use compiler hints like #pragma unroll\n\nHard Requirements:\n\nReturn the full function, including the exact original function signature.\n\nOnly modify code inside the function body.\n\n\
-    Preserve algorithmic correctness and bitwise-equivalent outputs.\n\nMaintains existing formatting and comments unless improving them.\n\nCode must be compilable and runnable."
+        self.gpu_id = gpu_id
+        self.repo_path = kwargs["repo_path"]
+        if gpu_id is not None:
+            os.environ["HIP_VISIBLE_DEVICES"] = str(gpu_id)
 
-        # cody, currently not use system prompt right now, to be accord with AIG-Eval
-#         self.memories.ps.system = """
-#   You are an expert C++ programmer specializing in AMD ROCm kernels.
-#   **Performance Analysis Guidelines**
-#   When analyzing performance bottlenecks, consider:
-#   1. **GPU Occupancy Analysis**:
-#     - Check if the number of launched blocks is sufficient for good GPU utilization
-#     - For few segments (e.g., ≤32), single-block-per-segment may lead to low occupancy
-#     - Consider multi-block parallelization strategies when segment count is small
-#   2. **Architecture-level Optimizations**:
-#     - Beyond code-level optimizations (loop unrolling, memory access), consider:
-#       - Parallelizing segment processing across multiple blocks
-#       - Two-phase reduction strategies (partial results + final reduction)
-#       - Adaptive strategies based on segment count
-#   3. **Test Scenario Awareness**:
-#     - Benchmark tests segment counts: 1, 10, 100, 1000, 10000
-#     - Pay attention to performance across ALL segment counts
-#     - Low segment counts (1, 10) may require different optimization strategies than high counts (1000, 10000)
-# """
+            if kwargs["gpu_ids"] and kwargs["gpu_ids"].index(gpu_id) == 0:
+                logger.info(f"GPU-ID {gpu_id}: directly start")
+            else:
+                random.seed(int(gpu_id))
+                rand_time = random.randint(0,5)
+                logger.info(f"GPU-ID {gpu_id}: sleep for {rand_time}")
+                time.sleep(rand_time)
+        
+        # define the generator based on the id
+        self.generator = VLLMModel()
+
+    
         #init test, got the baseline performance first
         logger.info(f"Loading original perf for comparison for {kernel_func_name}...")
-        os.system("rm -rf /root/.cache/torch_extensions/")
-        # if self.use_ori_code:
-        #     self.ori_latency = 1.0
-        #     self.ori_speedup = 1.0
-        # else:
-        #     command = [f"{self.memories.ps.test_code}"]
-        #     result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=3600)
-        #     try:
-        #         output = result.stdout.strip()
-        #         self.ori_speedup = extract_json_from_stdout(output).get("speedup", 0)
-        #         self.ori_latency = extract_json_from_stdout(output).get("latency", 0)
-        #     except Exception as e:
-        #         logger.info(f"failed to test the original code for {kernel_func_name}, please check configs or the original code. the reason is: {e}")
-        #         exit()
+
         cur_path = code_path
         for idx in range(100):
             cur_path = Path(cur_path).parent
             if os.path.exists(os.path.join(str(cur_path), 'baseline_perf.yaml')):
                 break
         if idx == 99:
-            raise FileNotFoundError("Cannot find baseline_perf under given code path or its parent! Please check!")
-        tmp = yaml.safe_load(open(os.path.join(str(cur_path), 'baseline_perf.yaml')))
-        self.ori_latency = []
-        for test_case in tmp['test_cases']:
-            self.ori_latency.append(float(test_case['execution_time_ms']))
-        self.ori_speedup = 1.0
+            #raise FileNotFoundError("Cannot find baseline_perf under given code path or its parent! Please check!")
+            logger.info("Cannot find baseline_perf under given code path or its parent! rerun the baseline.")
+            command = [f"{self.memories.ps.test_code}"]
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=3600)
 
-        logger.info(f"Original latency set successfully! It is {self.ori_latency}")
-        logger.info(f"Original speedup set successfully! It is 1.0")
+            output = result.stdout.strip()
+            logger.info(output)
+            json_output= extract_json_from_stdout(output)
+            self.ori_speedup = json_output.get("speedup", 1.0)
+            self.ori_latency = json_output.get("latency", [9999])
+        else:
+            tmp = yaml.safe_load(open(os.path.join(str(cur_path), 'baseline_perf.yaml')))
+            self.ori_latency = []
+            for test_case in tmp['test_cases']:
+                self.ori_latency.append(float(test_case['execution_time_ms']))
+            self.ori_speedup = 1.0
+
+        logger.info(f"GPU-ID {gpu_id}: Original latency set successfully! It is {self.ori_latency}")
+        logger.info(f"GPU-ID {gpu_id}: Original speedup set successfully! It is {self.ori_speedup}")
 
             
 
-        logger.info(f"\n===OURLLM Optimize {code_path} ===")
+        logger.info(f"\n===GPU-ID {gpu_id}: OURLLM Optimize {code_path} ===")
         for iter in range(self.config.iteration_num):
-            logger.info(f"\n===OURLLM Iteration {iter} ===")
+            logger.info(f"\n===GPU-ID {gpu_id}: OURLLM Iteration {iter} ===")
             if self.config.output_path is not None:
                 os.makedirs(os.path.dirname(self.config.output_path), exist_ok=True)
                 root, extension = os.path.splitext(self.config.output_path)
                 mem_output_path = f"{root}_mem_{iter}.json"
 
             # generate solution
-            logger.info(f"\ngenerate solution")
-            self.generate_solution(self.memories)
+            logger.info(f"\nGPU-ID {gpu_id}:  generate solution")
+            self.generate_solution(self.memories, iter)
             
-            # generate LLM evaluation
-            #logger.info(f"\ngenerate LLM evaluation")
-            #self.generate_llm_evaluate(self.memories)
             
             # run scripts
-            logger.info(f"\nrun scripts on gpu")
+            logger.info(f"\nGPU-ID {gpu_id}:  run scripts on gpu")
             if self.memories.raw_codes:
                 for i in range(len(self.memories.raw_codes)):
                     raw_code = self.memories.raw_codes[i]
-                    speedup = 0.
+                    speedup = 0.0
                     latency = 9999
                     if raw_code.pass_perf:
                         continue
                     try:
                         if raw_code.code:
-                            with open(code_path, "w", encoding="utf-8") as f:
-                                f.write(raw_code.code)
-                            # import pdb; pdb.set_trace()
-                            os.system("rm -rf /root/.cache/torch_extensions/")
-                            #command = [f"HIP_VISIBLE_DEVICES={self.config.gpu_id} {self.memories.ps.test_code}"]
                             command = [f"{self.memories.ps.test_code}"]
+                            with open(code_path, 'w') as writer:
+                                writer.write(raw_code.code)
                             if self.use_ori_code:
                                 speedup = self.ori_speedup
                                 latency = self.ori_latency
@@ -288,17 +267,24 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
                                     pass_exe = pass_call and "Failed to run performance" not in output
                                     
                                     if pass_exe:
-                                        speedup = extract_json_from_stdout(output, self.ori_latency).get("speedup", 0)   
-                                        latency = extract_json_from_stdout(output, self.ori_latency).get("latency", 0)                                  
+                                        json_output = extract_json_from_stdout(output, self.ori_latency)
+                                        speedup = json_output.get("speedup", 0)  
+                                        latency = json_output.get("latency", [9999])  
+                                        #logger.info(f"GPU-ID {gpu_id}: json output {json_output}")                                
                                     stdout, stderr = result.stdout, result.stderr
                                 else:
-                                    pass_call, pass_exe, speedup, latency, stdout, stderr = False, False, 0.0, 9999,  result.stdout, result.stderr
+                                    pass_call, pass_exe, speedup, latency, stdout, stderr = False, False, 0.0, [9999],  result.stdout, result.stderr
                         else :
                             pass_call, pass_exe, speedup, latency, stdout, stderr = False, False, 0.0, 9999, "", "Code is empty"
                         if type(latency) is list and len(latency) < 5:
-                            logger.info(f'iter {iter}, descendant {i}: pass_call {pass_call}, pass_exe {pass_exe}, latency {latency}, speedup {speedup}')
+                            logger.info(f'GPU-ID {gpu_id}: iter {iter}, descendant {i}: pass_call {pass_call}, pass_exe {pass_exe}, latency {latency}, speedup {speedup}')
                         else:
-                            logger.info(f'iter {iter}, descendant {i}: pass_call {pass_call}, pass_exe {pass_exe}, speedup {speedup}')
+                            logger.info(f'GPU-ID {gpu_id}: iter {iter}, descendant {i}: pass_call {pass_call}, pass_exe {pass_exe}, speedup {speedup}')
+                        
+                        record_path = os.path.join(self.repo_path, f'eval.eval_record_iter{iter}_des{i}.json')
+                        with open(record_path, "w") as f:
+                            cur_data = {"stdout":stdout, "stderr":stderr}
+                            f.write(json.dumps(cur_data, ensure_ascii=False)+'\n')
                     except Exception as e:
                         logger.info(f"failed to test the code for {self.memories.ps.file_path} due to {e}")
                         #logger.info(result)
@@ -342,6 +328,8 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
             # generate reflections
             if self.forbid_reflection:
                 logger.info("FORBID REFLEXION")
+            elif iter == self.config.iteration_num - 1:
+                logger.info(f"\ndo not need to generate reflections in the last iter")
             else:
                 logger.info(f"\ngenerate reflections")
                 self.generate_reflexion(self.memories)
@@ -353,11 +341,9 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
                 for i in range(len(self.memories.raw_codes)):
                     raw_code = self.memories.raw_codes[i]
                     self.memories.history[i].append(raw_code)
-                    #codes_sorted = sorted(self.memories.history[i], key=lambda x: x.llm_metric, reverse=True)
                     codes_sorted = sorted(self.memories.history[i], key=lambda x: x.metric, reverse=True)
                     self.memories.history[i] = codes_sorted[:5]
-                    if raw_code.pass_perf: #and raw_code.strategy:
-                        #raw_code.strategy = None
+                    if raw_code.pass_perf:
                         self.update_perf_candidates(mem=self.memories, raw_code=raw_code, ancestor_num=self.config.ancestor_num, metric_order=self.config.metric_order)
             for i in range(len(self.memories.perf_candidates)):
                 logger.info("Candidate {} perf {} speedup {}".format(i+1, self.memories.perf_candidates[i][1], self.memories.perf_candidates[i][2]))
@@ -377,15 +363,16 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
 
         if len(self.memories.perf_candidates) > 0:
             self.memories.ps.label = self.memories.perf_candidates[0][0]
+            return self.memories.ps.label, self.memories.perf_candidates[0][2]
+
         else:
             self.memories.ps.label = self.memories.ps.ori_full_code
             logger.info('[WARNING] OURLLM optimization failed, fall back to ori code')
-        with open(code_path, "w", encoding="utf-8") as f:
-            f.write(self.memories.ps.label)
+            return self.memories.ps.label, 1.0
+
     
-    def generate_solution(self, mem):
-        # import pdb; pdb.set_trace()
-        #text = mem.ps.system
+    def generate_solution(self, mem, iter):
+
         text = mem.ps.instruction
 
         # for the one that has perf_candidates, and the code generated in this round pass_exe, we need to generate a new code
@@ -397,18 +384,11 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
         
         
         label_kernel = mem.ps.kernel_code
-        #text += f"Here is the code for you to optimize {replace_defines_forward(mem.ps.ori_full_code, mem.ps.define_dict)}"
-        #text += f"\nHere is the kernel extracted from the baseline code that runs in high latency but correctly validated: {label_kernel}"
-        
+
         prompt_cand_num = 0
         prompt_trial_num = 0
         if len(mem.perf_candidates) > 0 and not mem.raw_codes:
-            text += f"\nHere is an example snippet of baseline code that runs in high latency but correctly validated: {label_kernel}"
-            #if type(self.ori_latency) is list and len(self.ori_latency) <=5:
-            #    text += f"\nbaseline code latency(e.g. ms) (multiple latency number corresponds to different input or forward/backward in order if implemented): {self.ori_latency}"
-            #else:
-            #    text += f"\nbaseline code latency(e.g. ms): {self.ori_latency}"
-        
+            text += f"\nHere is an example snippet of baseline code that runs in low latency but correctly validated: {label_kernel}"
             text += """\nThere are some reference codes(NO.1, NO.2 and so on). According to their performance(latency in ms) and the corresponding analysis, you need to continue optimize the code with better performance. You should maintain code correctness during optimization."""
             text +="\nYou can use optimization strategies such as Memory access efficiency, Hardware resource utilization, IR analysis, Assembly analysis, Kernel occupancy."
 
@@ -463,7 +443,7 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
                     prompt_trial_num += 1
                     #if prompt_trial_num >= self.config.ancestor_num - len(mem.perf_candidates):
                     #    break
-        logger.info(f"====== GOT {prompt_cand_num} candidates and {prompt_trial_num} failed trials in this iteration ======")
+        logger.info(f"GPU-ID {self.gpu_id}: ====== GOT {prompt_cand_num} candidates and {prompt_trial_num} failed trials in this iteration ======")
 
         text += "\nOutput your answer in json format, with the format as follows: {\"thought\": \"\", \"code\": \"\"}. Please strictly output in JSON format."
         text += "\nGenerate the correct and optimized code without explanation, which we can run directly in the \"code\" field."
@@ -472,9 +452,7 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
         for i in range(self.config.descendant_num):
             gen_code = tempCode()
             try:
-                #if i == 0:
-                #    logger.info(text)
-                gen_code.code, gen_code.strategy = self.call_llm_code(prompt=text, temperature=self.config.temperature, mem=mem, seed=i)
+                gen_code.code, gen_code.strategy = self.call_llm_code(prompt=text, temperature=self.config.temperature, mem=mem, seed=i, iter=iter)
             except Exception as e:
                 logger.info(f"failed to call LLM for {mem.ps.file_path} due to {e}")
             gens_codes.append(gen_code)
@@ -528,36 +506,24 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
                     raw_code.reflections = None
 
     
-    def call_llm_code(self, prompt, temperature, mem, seed):
+    def call_llm_code(self, prompt, temperature, mem, seed, iter):
         if self.use_ori_code:
             logger.info("IN DEBUG MODE: USE_ORI_CODE, output the original code directly")
             return mem.ps.ori_full_code, ""
         
         msg = [{"role": "user", "content": prompt}]
        
-        #logger.info("DEBUGGING USING CLAUDE-4.5 go generate code")
-        response = self.generator.generate(msg, temperature=1.0, max_tokens=32768, seed=seed)
-  
+        response = self.generator.generate(msg, temperature=1.0, max_tokens=40960, seed=seed)
+        record_path = os.path.join(self.repo_path, f'trial.gen_record_iter{iter}_des{seed}.json')
+        with open(record_path, "w") as f:
+            cur_data = {"prompt":msg[0]["content"], "response":response}
+            f.write(json.dumps(cur_data, ensure_ascii=False)+'\n')
        
-
-        # if response is not None:
-        #     record_dir = "record"
-        #     record_path = os.path.join(record_dir, mem.ps.filename+f'.gen_record_des_{i}')
-        #     os.makedirs(record_dir, exist_ok=True)
-        #     with open(record_path, "w") as f:
-        #         f.write(response)
         try:
             code = clear_json(response)["code"]
             strategy = clear_json(response)['thought']
         except:
             logger.info(f"failed to extract code for {mem.ps.kernel_func_name}")
-            # fail_dir = "failed_to_extract"
-            # fail_path = os.path.join(fail_dir, mem.ps.filename+'.gen_fail')
-            # os.makedirs(fail_dir, exist_ok=True)
-
-            # if response is not None:
-            #     with open(fail_path, "w") as f:
-            #         f.write(response)
             try:
                 code = response.split("\"code\":")[1]
                 code = code.split("}")[0]
@@ -628,25 +594,3 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
             mem.perf_candidates = sorted(mem.perf_candidates, key=lambda x: x[2], reverse=metric_order)
        
     
-    def generate_llm_evaluate(self, mem):
-        if mem.raw_codes :
-            for i in range(len(mem.raw_codes)):
-                raw_code = mem.raw_codes[i]
-                if not raw_code.pass_perf:
-                    text = ""
-                    text += prompt_for_generation.llm_evaluate_prompt.format(current_program=raw_code.code)
-                    msg = [{"role": "user", "content": text}]
-                    try:
-                        response = self.model.generate(msg, temperature=self.config.temperature)
-                        llm_eval = clear_json(response)
-                        metric = 0.0
-                        for k, v in llm_eval.items():
-                            if k == "reasoning":
-                                continue
-                            if isinstance(v, float) or isinstance(v, int):
-                                metric += float(v)
-                        raw_code.llm_metric = metric
-                        raw_code.llm_eval = llm_eval
-                    except Exception as e:
-                        logger.info(f"failed to generate LLM evaluation {e}")
-                        raise ValueError("failed to generate LLM evaluation")

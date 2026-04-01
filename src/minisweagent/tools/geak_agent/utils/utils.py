@@ -74,31 +74,6 @@ def extract_json_from_stdout_benchmark(stdout_string: str) -> dict:
         return {}
 
 
-def extract_json_from_stdout_benchmark(stdout_string: str) -> dict:
-    """
-    Extracts a JSON object from a string that contains json in markdown format e.g. ```json\n .... \n```.
-
-    Args:
-        stdout_string: The complete stdout output as a string.
-
-    Returns:
-        A dictionary containing the extracted JSON data, or an empty dictionary
-        if no valid JSON is found.
-    """
-    # Use a regular expression to find the content between the ```json
-    # and the closing ```.
-    pattern = re.compile(r'```json\s*(.*?)\s*```', re.DOTALL)
-
-    match = pattern.search(stdout_string)
-
-    if match:
-        json_string = match.group(1).strip()
-        try:
-            return json.loads(json_string)
-        except json.JSONDecodeError:
-            return {}
-    else:
-        return {}
 
 
 def extract_json_from_stdout(input_str, old_latency=[]):
@@ -107,7 +82,21 @@ def extract_json_from_stdout(input_str, old_latency=[]):
  
     lines = input_str.split('\n')
     
-    if "Perf" in input_str and "ms" in input_str:
+    lv3_flag = False
+    if "bytes_per_second" in input_str and "items_per_second" in input_str:
+        pattern = re.compile(r'bytes_per_second=(\d+(?:\.\d+)?)([MGTk])/s', flags=re.IGNORECASE)
+        def to_GBps(value: float, unit: str) -> float:
+            unit = unit.upper()
+            if unit == 'M':
+                return value / 1024
+            elif unit == 'T':
+                return value * 1024
+            elif unit == 'k':
+                return value / 1024 /1024
+            return value
+        lv3_flag = True
+        reverse_flag = True
+    elif "Perf" in input_str and "ms" in input_str:
         pattern = r'Perf(?:ormance)?:\s*(-?\d+\.?\d*)\s*ms'
         reverse_flag = False
     else:
@@ -122,23 +111,28 @@ def extract_json_from_stdout(input_str, old_latency=[]):
         line = line.strip()
         if not line:  
             continue
-        
+        if lv3_flag:
+            match = pattern.search(line)
+        else:
+            match = re.search(pattern, line, re.IGNORECASE)
 
-        match = re.search(pattern, line, re.IGNORECASE)  
         if match:
             try:
-                num = float(match.group(1))
+                if lv3_flag:
+                    val, unit = match.groups()
+                    num = float(to_GBps(float(val), unit))
+                else:
+                    num = float(match.group(1))
                 if reverse_flag:
                     num = 1/num
                 numbers.append(num)
             except ValueError:
-
                 continue
     output_dict = {"latency": numbers}
     if len(old_latency) > 0:
         assert len(old_latency) == len(numbers), f"Latency error! the number of latency must be the same!, but got {old_latency} and {numbers}"
-        speedups = [y/x for x, y in zip(numbers, old_latency)]
-        speedup = sum(speedups)/len(speedups)
+        #speedups = [y/x for x, y in zip(numbers, old_latency)]
+        speedup = sum(old_latency)/sum(numbers) # to accord with arena
         output_dict["speedup"] = speedup
     else:
         output_dict["speedup"] = 1.0
