@@ -10,7 +10,10 @@ from minisweagent.tools.submit import SubmitTool
 import os
 
 json_path = Path(__file__).parent / "tools.json"
-use_kernel_llm_flag=os.environ["USE_KERNEL_LLM"]
+try:
+    use_kernel_llm_flag=os.environ["USE_KERNEL_LLM"]
+except:
+    use_kernel_llm_flag=0
 if use_kernel_llm_flag:
     from minisweagent.tools.geak_kernel_llm import GEAK_kernel_llm
     json_path = os.path.join(Path(__file__).parent, "tools_kernel_llm.json")
