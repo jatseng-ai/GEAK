@@ -5,7 +5,6 @@ preds.json
 .env
 traj.json
 run_test.sh
-silu/
 device_search_n/
 check_prompt/
 error_log/
