@@ -217,9 +217,9 @@ class GaAgent_kernel2kernel(Reflexion_Oneshot):
         else:
             tmp = yaml.safe_load(open(os.path.join(str(cur_path), 'baseline_perf.yaml')))
             self.ori_latency = []
-            # for test_case in tmp['test_cases']:
-            #     self.ori_latency.append(float(test_case['execution_time_ms']))
-            self.ori_latency = tmp['test_cases']
+            for test_case in tmp['test_cases']:
+                self.ori_latency.append(float(test_case['execution_time_ms']))
+            #self.ori_latency = tmp['test_cases']
             self.ori_speedup = 1.0
 
         logger.info(f"GPU-ID {gpu_id}: Original latency set successfully! It is {self.ori_latency}")
