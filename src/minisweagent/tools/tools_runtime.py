@@ -7,8 +7,15 @@ from minisweagent.tools.save_and_test import SaveAndTestTool
 from minisweagent.tools.str_replace_editor import str_replace_editor
 from minisweagent.tools.strategy_manager import StrategyManagerTool
 from minisweagent.tools.submit import SubmitTool
+import os
 
 json_path = Path(__file__).parent / "tools.json"
+use_kernel_llm_flag=os.environ["USE_KERNEL_LLM"]
+if use_kernel_llm_flag:
+    from minisweagent.tools.geak_kernel_llm import GEAK_kernel_llm
+    json_path = os.path.join(Path(__file__).parent, "tools_kernel_llm.json")
+
+
 with open(json_path, encoding="utf-8") as f:
     _all_tools = json.load(f)
 
@@ -92,7 +99,9 @@ class ToolRuntime:
                 self._tool_table["strategy_manager"] = StrategyManagerTool(
                     filepath=strategy_file, on_change_callback=on_strategy_change
                 )
-
+            if use_kernel_llm_flag:
+                self._tool_table["geak_kernel_llm"] = GEAK_kernel_llm()
+            
             try:
                 from minisweagent.tools.baseline_metrics_tool import BaselineMetricsTool
 

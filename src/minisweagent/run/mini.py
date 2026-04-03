@@ -189,7 +189,11 @@ def main(
     configure_if_first_time()
 
     # 1) Config merge
-    base_config_path = builtin_config_dir / "mini_kernel_strategy_list.yaml"
+    enable_geak_kernel_llm = os.environ["USE_KERNEL_LLM"]
+    if enable_geak_kernel_llm:
+        base_config_path = builtin_config_dir / "mini_kernel_strategy_list_kernel_llm.yaml"
+    else:
+        base_config_path = builtin_config_dir / "mini_kernel_strategy_list.yaml"
     console.print(f"Loading base config: [bold green]'{base_config_path.name}'[/bold green]")
     config = yaml.safe_load(base_config_path.read_text()) or {}
     config_path = config_spec or (builtin_config_dir / "geak.yaml")
