@@ -8,6 +8,9 @@ run_test.sh
 device_search_n/
 check_prompt/
 error_log/
+logs
+optimization_logs
+silu
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python

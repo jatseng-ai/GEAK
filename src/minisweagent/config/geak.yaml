@@ -2,6 +2,7 @@ agent:
   step_limit: 0.
   cost_limit: 0.
   mode: confirm
+  use_strategy_manager: true
 env:
   env:
     PAGER: cat
@@ -11,6 +12,7 @@ env:
     TQDM_DISABLE: '1'
   timeout: 3600
 model:
+  use_strategy_manager: true
   model_class: amd_llm
   # claude-opus-4.6, claude-sonnet-4.5, gpt-5.1, gpt-5, gpt-5-codex
   model_name: claude-opus-4.6
@@ -27,3 +29,6 @@ model:
 tools:
   profiling: false
   profiling_type: profiling
+  profile_kernel: false
+  strategy_manager: true
+  geak_kernel_llm: true

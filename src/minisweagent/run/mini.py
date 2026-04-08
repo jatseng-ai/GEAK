@@ -189,7 +189,10 @@ def main(
     configure_if_first_time()
 
     # 1) Config merge
-    enable_geak_kernel_llm = os.environ["USE_KERNEL_LLM"]
+    try:
+        enable_geak_kernel_llm = os.environ["USE_KERNEL_LLM"]
+    except:
+        enable_geak_kernel_llm = 0
     if enable_geak_kernel_llm:
         base_config_path = builtin_config_dir / "mini_kernel_strategy_list_kernel_llm.yaml"
     else:

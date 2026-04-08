@@ -40,6 +40,7 @@ _TOOL_PROFILES: dict[str, set[str] | None] = {
         "profile_kernel",
         "baseline_metrics",
         "strategy_manager",
+        "geak_kernel_llm"
     },
 }
 
@@ -94,6 +95,8 @@ class ToolRuntime:
                 self._tool_table["strategy_manager"] = StrategyManagerTool(
                     filepath=strategy_file, on_change_callback=on_strategy_change
                 )
+            if use_kernel_llm_flag:
+                self._tool_table["geak_kernel_llm"] = GEAK_kernel_llm()
             if "profile_kernel" in allowed:
                 self._register_profiler_mcp()
             self._sub_agent_tool = None
