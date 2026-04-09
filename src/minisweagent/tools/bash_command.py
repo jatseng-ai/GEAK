@@ -1,7 +1,10 @@
+import logging
 import os
 import re
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Matches shell redirect / heredoc patterns that write to COMMANDMENT.md,
 # e.g. ``cat > path/COMMANDMENT.md``, ``tee path/COMMANDMENT.md``,
@@ -117,6 +120,6 @@ class BashCommand:
                     if msg:
                         output_text += f"\n\n{msg}"
                 except Exception:
-                    pass
+                    logger.debug("COMMANDMENT validation failed", exc_info=True)
 
         return output_text
