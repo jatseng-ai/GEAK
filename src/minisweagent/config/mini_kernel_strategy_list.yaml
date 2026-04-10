@@ -61,10 +61,11 @@ agent:
        - Understand the current implementation and its context
        - For complex tasks: Use `strategy_manager` tool to create `.optimization_strategies.md` with 3-5 potential optimization strategies
 
-    3. **Establish Baseline Performance** 
+    3. **Establish Baseline Performance**
        - **CRITICAL**: Measure original implementation performance BEFORE any optimization
-       - **ALWAYS use the `save_and_test` tool** to measure baseline performance:
-         Call `save_and_test` tool with description: "baseline"
+       - **If `benchmark_baseline.txt` exists in the workspace**, it is the authoritative baseline.
+         Read and parse it to extract key metrics. Do NOT re-run baseline measurement.
+       - **If `benchmark_baseline.txt` does NOT exist**, measure baseline using `save_and_test` tool with description: "baseline"
        - **DO NOT construct manual test commands or benchmarks.**
        - The system will automatically run tests and save results
        - Record key metrics summary in your strategy file (bandwidth, throughput, latency, occupancy, etc.)

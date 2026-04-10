@@ -66,6 +66,7 @@ class ParallelAgent(DefaultAgent):
     def run(self, task: str, **kwargs) -> BestPatchResult | None:
         num_parallel = self.config.num_parallel or 1
         console = kwargs.get("console")
+        round_num = kwargs.get("round_num", 1)
 
         # Validate repo path (required for worktree management)
         if not self.config.repo:
@@ -106,6 +107,7 @@ class ParallelAgent(DefaultAgent):
             console=console,
             agent_specs=self.config.agent_specs,
             tasks=self.config.tasks,
+            round_num=round_num,
         )
 
         metric = (
@@ -114,7 +116,7 @@ class ParallelAgent(DefaultAgent):
         if console:
             console.print(f"\n[bold green]Selecting best patch from {num_parallel} parallel runs...[/bold green]")
         logger.info("Selecting best patch from %d parallel runs...", num_parallel)
-        results_dir = base_patch_dir / "results" / "round_1"
+        results_dir = base_patch_dir / "results" / f"round_{round_num}"
         best_result = self._select_best_from_parallel_runs(results_dir, num_parallel, metric, model_factory)
         if best_result and best_result.llm_conclusion:
             if console:
@@ -516,6 +518,7 @@ class ParallelAgent(DefaultAgent):
         console=None,
         agent_specs: list | None = None,
         tasks: list | None = None,
+        round_num: int = 1,
     ) -> list[tuple[int, Any, Any, Any]]:
         """Run multiple parallel agents and return their results.
 
@@ -560,10 +563,10 @@ class ParallelAgent(DefaultAgent):
             )
 
         # Homogeneous mode (original behavior)
-        logger.debug("Running %d parallel patch agents...", num_parallel)
+        logger.debug("Running %d parallel patch agents (round %d)...", num_parallel, round_num)
 
         base_patch_dir = base_patch_dir.resolve()
-        results_dir = base_patch_dir / "results" / "round_1"
+        results_dir = base_patch_dir / "results" / f"round_{round_num}"
         results_dir.mkdir(parents=True, exist_ok=True)
         worktree_base = results_dir / "worktrees"
         worktree_base.mkdir(parents=True, exist_ok=True)
@@ -571,7 +574,7 @@ class ParallelAgent(DefaultAgent):
         repo_path_str = str(repo_path_resolved)
 
         # Write task files (aligned with heterogeneous tasks/ structure)
-        tasks_dir = base_patch_dir / "tasks" / "round_1"
+        tasks_dir = base_patch_dir / "tasks" / f"round_{round_num}"
         tasks_dir.mkdir(parents=True, exist_ok=True)
         for i in range(num_parallel):
             task_path = tasks_dir / f"parallel_{i}.md"
@@ -594,7 +597,15 @@ class ParallelAgent(DefaultAgent):
         def run_single_agent(agent_id: int):
             """Run a single parallel agent instance."""
             # All repos use git worktree (non-git repos are initialized as git above)
-            worktree_path = cls._create_worktree(repo_path, worktree_base / f"slot_{agent_id}")
+            starting_patch = agent_config.get("starting_patch")
+            if starting_patch and Path(starting_patch).exists():
+                from minisweagent.run.task_file import create_worktree_with_patch
+
+                worktree_path = create_worktree_with_patch(
+                    repo_path, worktree_base / f"slot_{agent_id}", starting_patch
+                )
+            else:
+                worktree_path = cls._create_worktree(repo_path, worktree_base / f"slot_{agent_id}")
             worktree_path_str = str(worktree_path.resolve())
 
             logger.debug("Created worktree for agent %d: %s", agent_id, worktree_path)

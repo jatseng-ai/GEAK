@@ -69,7 +69,10 @@ agent:
     ## Inputs
     - Work directory (absolute): {{base_patch_dir}}
     - Expected parallel runs (hint): {{num_parallel}}
-    - Baseline test log (you must locate it): `{{base_patch_dir}}/parallel_*/patch_0_test.txt` or `{{base_patch_dir}}/patch_0_test.txt`
+    - Baseline: First check if `benchmark_baseline.txt` exists in `{{base_patch_dir}}` or its parent directories.
+      If found, use it as the authoritative baseline for speedup computation.
+      Only fall back to `patch_0` test logs if `benchmark_baseline.txt` is not available.
+    - Baseline test log (fallback): `{{base_patch_dir}}/parallel_*/patch_0_test.txt` or `{{base_patch_dir}}/patch_0_test.txt`
     - Patch files: `{{base_patch_dir}}/parallel_*/patch_*.patch` or `{{base_patch_dir}}/patch_*.patch`
     - Patch test logs: `{{base_patch_dir}}/parallel_*/patch_*_test.txt` or `{{base_patch_dir}}/patch_*_test.txt`
   

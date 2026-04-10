@@ -7,7 +7,6 @@ homogeneous configuration (all agents run the same task with identical settings)
 """
 
 import copy
-import json
 import logging
 import time
 from pathlib import Path
@@ -42,6 +41,8 @@ def run_homogeneous_agent(
     output_dir: Path | None = None,
     model_name: str | None = None,
     console: Console | None = None,
+    max_rounds: int = 1,
+    preprocess_ctx: dict | None = None,
 ) -> BestPatchResult | None:
     """
     Run homogeneous parallel agents.
@@ -134,48 +135,83 @@ def run_homogeneous_agent(
     logger.info("  repo=%s, output_dir=%s", final_repo, final_output_dir)
     logger.info("[dim]Sub-agents are working — expect no output for several minutes.[/dim]")
 
-    # Create and run ParallelAgent
-    agent = ParallelAgent(model, env, **agent_config)
+    task_content = task_content + "\n\n" + "The current worktree is: " + str(final_repo)
+    best_result = None
 
     try:
-        task_content = task_content + "\n\n" + "The current worktree is: " + str(final_repo)
-        _t0 = time.monotonic()
-        best_result = agent.run(
-            task_content,
-            console=console,
-            model_factory=lambda: get_model(model_name, model_config.copy()),
-            env_factory=lambda: env_class(**copy.deepcopy(env_kwargs)),
-        )
-        _elapsed = time.monotonic() - _t0
-
-        if best_result:
+        for round_num in range(1, max_rounds + 1):
+            is_last = round_num == max_rounds
             logger.info(
-                "Homogeneous run completed in %.0fs. Best patch: %s (agent %d)",
-                _elapsed,
-                best_result.patch_id,
-                best_result.agent_id,
+                "\n[bold cyan]%s[/bold cyan]\n  [bold]Homogeneous Round %d/%d[/bold]%s\n[bold cyan]%s[/bold cyan]",
+                "=" * 60,
+                round_num,
+                max_rounds,
+                " [bold red](FINAL)[/bold red]" if is_last else "",
+                "=" * 60,
             )
-            console.print(
-                f"\n[bold green]Best patch:[/bold green] {best_result.patch_id} (agent {best_result.agent_id})"
-            )
-        else:
-            logger.info("Homogeneous run completed in %.0fs. No best patch selected.", _elapsed)
-            console.print("\n[bold yellow]No best patch selected[/bold yellow]")
 
-        # Write final_report.json (aligned with heterogeneous output structure)
-        report = {
-            "status": "complete",
-            "best_patch": str(best_result.patch_dir / best_result.patch_id)
-            if best_result and best_result.patch_dir
-            else None,
-            "best_speedup": best_result.metric_result.get("best_speedup")
-            if best_result and best_result.metric_result
-            else None,
-            "summary": best_result.llm_conclusion if best_result else "No best patch selected",
-        }
-        report_path = final_output_dir / "final_report.json"
-        report_path.write_text(json.dumps(report, indent=2, default=str))
-        logger.info("Wrote final_report.json to %s", report_path)
+            # Set starting_patch from previous round's best result
+            if round_num > 1 and best_result and best_result.patch_dir:
+                best_patch_path = best_result.patch_dir / f"{best_result.patch_id}.patch"
+                if best_patch_path.exists():
+                    agent_config["starting_patch"] = str(best_patch_path)
+                    logger.info("Starting from best patch of round %d: %s", round_num - 1, best_patch_path)
+
+            # Enrich prompt for round 2+ with previous results
+            round_task = task_content
+            if round_num > 1:
+                from minisweagent.agents.heterogeneous.result_scanning import scan_previous_results
+
+                prev_summary = scan_previous_results(final_output_dir / "results")
+                if prev_summary:
+                    round_task = (
+                        f"{task_content}\n\n---\n\n"
+                        f"## Previous Round Results\n"
+                        f"Below are results from previous optimization rounds. "
+                        f"Use these to inform your strategy — avoid repeating failed approaches "
+                        f"and build on successful ones.\n\n"
+                        f"{prev_summary}"
+                    )
+
+            # Create a fresh ParallelAgent for each round
+            agent = ParallelAgent(model, env, **agent_config)
+
+            _t0 = time.monotonic()
+            best_result = agent.run(
+                round_task,
+                console=console,
+                model_factory=lambda: get_model(model_name, model_config.copy()),
+                env_factory=lambda: env_class(**copy.deepcopy(env_kwargs)),
+                round_num=round_num,
+            )
+            _elapsed = time.monotonic() - _t0
+
+            if best_result:
+                logger.info(
+                    "Round %d completed in %.0fs. Best patch: %s (agent %d)",
+                    round_num,
+                    _elapsed,
+                    best_result.patch_id,
+                    best_result.agent_id,
+                )
+                console.print(
+                    f"\n[bold green]Round {round_num} best patch:[/bold green] "
+                    f"{best_result.patch_id} (agent {best_result.agent_id})"
+                )
+            else:
+                logger.info("Round %d completed in %.0fs. No best patch selected.", round_num, _elapsed)
+                console.print(f"\n[bold yellow]Round {round_num}: No best patch selected[/bold yellow]")
+
+        # Write final_report.json using auto_finalize (selects best across all rounds)
+        from minisweagent.run.postprocess.results import auto_finalize
+
+        ctx = {"output_dir": str(final_output_dir)}
+        if preprocess_ctx:
+            ctx["kernel_path"] = preprocess_ctx.get("kernel_path", "")
+            ctx["repo_root"] = preprocess_ctx.get("repo_root", "")
+            ctx["baseline_metrics"] = preprocess_ctx.get("baseline_metrics")
+        auto_finalize(ctx)
+        logger.info("Wrote final_report.json to %s", final_output_dir / "final_report.json")
 
     except Exception as e:
         logger.error("Homogeneous agent failed: %s", e, exc_info=True)

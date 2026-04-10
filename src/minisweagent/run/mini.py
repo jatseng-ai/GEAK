@@ -594,6 +594,8 @@ def main(
         output_dir=preprocess_output_dir,
         model_name=model_name,
         console=console,
+        max_rounds=max_rounds or config.get("orchestrator", {}).get("max_rounds") or 1,
+        preprocess_ctx=preprocess_ctx,
     )
     logger.info("Run completed in %.0fs.", time.monotonic() - _run_t0)
     if repo_path and repo_path.is_dir():
