@@ -498,9 +498,16 @@ def run_preprocessor(
         kernel_path = _clean_kernel
         # For merged kernels, the split helper may produce a GEAK-compatible
         # wrapper harness (e.g. HIP/CUDA mixed-source cases). Reuse it directly
-        # when the caller did not already provide a harness.
+        # when the caller did not already provide a harness — but only if the
+        # split harness passes static validation (has argparse + all required
+        # flags). Pure Triton merged files produce raw test logic without
+        # argparse, which fails validate_harness and causes a hard crash (#128).
         if not harness:
-            harness = _new_harness
+            from minisweagent.run.preprocess.harness_utils import validate_harness as _validate_harness
+
+            _split_valid, _ = _validate_harness(_new_harness)
+            if _split_valid:
+                harness = _new_harness
 
     logger.info("  Kernel: %s", kernel_path)
 
@@ -1099,6 +1106,11 @@ def run_preprocessor(
         _bm_val = extract_latency_ms(bb_text)
         if _bm_val is not None:
             baseline_metrics["benchmark_duration_us"] = _bm_val * 1000.0
+            # Preserve profiler value separately, then override duration_us with
+            # the harness-measured value so all consumers use the same source.
+            if "duration_us" in baseline_metrics:
+                baseline_metrics["profiler_duration_us"] = baseline_metrics["duration_us"]
+            baseline_metrics["duration_us"] = _bm_val * 1000.0
         _sm = _re.search(r"(\d+)\s+shapes", bb_text, _re.IGNORECASE)
         if _sm:
             baseline_metrics["benchmark_shape_count"] = int(_sm.group(1))
