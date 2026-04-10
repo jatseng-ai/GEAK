@@ -2,6 +2,7 @@
 
 """Backup mini entry with kernel-type routing."""
 
+import json
 import logging
 import shlex
 import sys
@@ -78,6 +79,73 @@ def _derive_output_dir(output: Path | None, kernel_name: str | None) -> Path:
         return output.parent
 
     return output
+
+
+def _apply_best_patch_to_repo(output_dir: Path, repo_path: Path) -> bool:
+    """Apply the best patch from final_report.json to the original repo.
+
+    Reads the verified best_patch path from final_report.json and applies
+    it using git apply with generated-helper stripping.
+
+    Returns True if the patch was applied successfully, False otherwise.
+    """
+    from minisweagent.run.utils.generated_artifacts import apply_patch_with_generated_helper_fallback
+    from minisweagent.run.utils.git_safe_env import get_git_safe_env
+
+    report_path = output_dir / "final_report.json"
+    if not report_path.exists():
+        logger.warning("No final_report.json found in %s, skipping patch application.", output_dir)
+        return False
+
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error("Failed to read final_report.json: %s", exc)
+        return False
+
+    best_patch = report.get("best_patch")
+    if not best_patch:
+        logger.info("No best patch in final_report.json, skipping patch application.")
+        return False
+
+    # Resolve patch path with .patch extension fallback
+    # (homogeneous stores stem-only paths like "patch_15", actual file is "patch_15.patch")
+    patch_path = Path(best_patch)
+    if not patch_path.exists():
+        patch_with_ext = patch_path.with_suffix(".patch")
+        if patch_with_ext.exists():
+            patch_path = patch_with_ext
+        else:
+            logger.error("Patch file not found: %s", best_patch)
+            return False
+
+    if patch_path.stat().st_size == 0:
+        logger.warning("Patch file is empty: %s", patch_path)
+        return False
+
+    patch_text = patch_path.read_text(encoding="utf-8", errors="replace")
+    git_env = get_git_safe_env(repo_path)
+
+    result, removed_paths = apply_patch_with_generated_helper_fallback(
+        patch_text=patch_text,
+        cwd=repo_path,
+        env=git_env,
+    )
+    if removed_paths:
+        logger.info(
+            "Stripped generated helper artifacts from patch before applying: %s",
+            ", ".join(removed_paths),
+        )
+    if result.returncode != 0:
+        logger.error(
+            "Failed to apply best patch to %s: %s",
+            repo_path,
+            result.stderr,
+        )
+        return False
+
+    logger.info("Best patch applied to repo %s: %s", repo_path, patch_path)
+    return True
 
 
 def _final_report_to_bestpatchresult(report: Any) -> BestPatchResult | None:
@@ -484,6 +552,12 @@ def main(
             heterogeneous=True,
         )
         logger.info("Run completed in %.0fs.", time.monotonic() - _run_t0)
+        _repo_for_patch = repo or Path(preprocess_ctx.get("repo_root", ""))
+        if _repo_for_patch and Path(_repo_for_patch).is_dir():
+            try:
+                _apply_best_patch_to_repo(preprocess_output_dir, Path(_repo_for_patch))
+            except Exception:
+                logger.warning("Failed to apply best patch to repo", exc_info=True)
         return _final_report_to_bestpatchresult(report)
 
     metric = parsed_config.get("metric") or config.get("patch", {}).get("metric")
@@ -522,6 +596,11 @@ def main(
         console=console,
     )
     logger.info("Run completed in %.0fs.", time.monotonic() - _run_t0)
+    if repo_path and repo_path.is_dir():
+        try:
+            _apply_best_patch_to_repo(preprocess_output_dir, repo_path)
+        except Exception:
+            logger.warning("Failed to apply best patch to repo", exc_info=True)
     return result
 
 
