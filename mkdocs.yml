@@ -39,6 +39,7 @@ nav:
       - Overview: developer/index.md
       - System & instance prompts: developer/prompts.md
       - MCP and native tools: developer/mcp-tools.md
+      - DRA design notes: developer/dra-design.md
   - ROCm environment: env_install.md
   - RAG sub-agent: subagent_guide.md
 
