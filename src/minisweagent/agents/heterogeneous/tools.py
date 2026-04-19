@@ -72,6 +72,8 @@ def tool_generate_tasks(
         ("baseline_metrics_path", "baseline_metrics.json"),
         ("discovery_path", "discovery.json"),
         ("codebase_context_path", "CODEBASE_CONTEXT.md"),
+        ("deep_search_path", "deep_search.md"),
+        ("experimental_directions_path", "experimental_directions.md"),
     ]:
         p = pp_dir / filename
         if p.exists():

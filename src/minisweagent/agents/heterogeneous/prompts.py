@@ -296,7 +296,8 @@ Generate optimization tasks for the kernel at {{ kernel_path }}.
 {% endif %}{% if baseline_metrics_path %}- **Baseline metrics**: {{ baseline_metrics_path }}
 {% endif %}{% if commandment_path %}- **COMMANDMENT.md** (evaluation contract): {{ commandment_path }}
 {% endif %}{% if knowledge_base_path %}- **Knowledge base** (optimization strategies): {{ knowledge_base_path }}
-{% endif %}{% if deep_search_path %}- **Deep search findings**: {{ deep_search_path }}
+{% endif %}{% if deep_search_path %}- **Deep search findings** (convergent, evidence-backed; primary source for task selection): {{ deep_search_path }}
+{% endif %}{% if experimental_directions_path %}- **Experimental directions** (orthogonal probes; reserve a small number of tasks for these to maintain exploration pressure): {{ experimental_directions_path }}
 {% endif %}{% if previous_results_path %}- **Prior round results** (what actually happened): {{ previous_results_path }}
 {% endif %}{% if previous_tasks_path %}- **Prior tasks planned** (avoid repeating): {{ previous_tasks_path }}
 {% endif %}{% if round_evaluations_path %}- **Round evaluations** (orchestrator-verified results): {{ round_evaluations_path }}

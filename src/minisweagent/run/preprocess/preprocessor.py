@@ -1230,6 +1230,66 @@ def run_preprocessor(
     if commandment:
         (output_dir / "COMMANDMENT.md").write_text(commandment)
 
+    # ── 8. Deep Research Artifact (optional) ─────────────────────────
+    # Opt-in via GEAK_DRA_ENABLE=1. Disabled by default because it adds
+    # several LLM calls to preprocess. When enabled, writes
+    # deep_search.{md,json} and experimental_directions.{md,json} into
+    # output_dir alongside profile.json.
+    dra_enabled = os.environ.get("GEAK_DRA_ENABLE", "").strip().lower() in ("1", "true", "yes", "on")
+    if dra_enabled:
+        logger.info("[bold cyan]--- Step 8/8: Deep Research Artifact (DRA) ---[/bold cyan]")
+        try:
+            from minisweagent.dra import DRAConfig, DRAInputs, run_dra
+            from minisweagent.models.amd_llm import AmdLlmModel
+
+            dra_cfg = DRAConfig.from_env()
+            if not dra_cfg.enabled:
+                logger.info("  DRA disabled by GEAK_DRA_DISABLE; skipping.")
+            else:
+                dra_inputs = DRAInputs(
+                    kernel_path=Path(kernel_path),
+                    output_dir=Path(output_dir),
+                    profile_path=(output_dir / "profile.json") if (output_dir / "profile.json").exists() else None,
+                    baseline_metrics_path=(
+                        (output_dir / "baseline_metrics.json")
+                        if (output_dir / "baseline_metrics.json").exists()
+                        else None
+                    ),
+                    discovery_path=(
+                        (output_dir / "discovery.json")
+                        if (output_dir / "discovery.json").exists()
+                        else None
+                    ),
+                    codebase_context_path=(
+                        (output_dir / "CODEBASE_CONTEXT.md")
+                        if (output_dir / "CODEBASE_CONTEXT.md").exists()
+                        else None
+                    ),
+                    commandment_path=(
+                        (output_dir / "COMMANDMENT.md")
+                        if (output_dir / "COMMANDMENT.md").exists()
+                        else None
+                    ),
+                )
+                dra_model = AmdLlmModel(model_name=dra_cfg.model_name, api_key=dra_cfg.api_key)
+                if hasattr(dra_model, "_impl") and hasattr(dra_model._impl, "tools"):
+                    dra_model._impl.tools = []
+                dra_paths = run_dra(dra_inputs, config=dra_cfg, model=dra_model)
+                ctx["dra_artifacts"] = {k: str(v) for k, v in dra_paths.items()}
+                logger.info("  DRA wrote %d artifact(s) to %s", len(dra_paths), output_dir)
+                if repo_root:
+                    for src in dra_paths.values():
+                        try:
+                            dest = Path(repo_root) / Path(src).name
+                            dest.write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
+                        except OSError as copy_exc:
+                            logger.debug("  Failed to mirror DRA artifact to repo root: %s", copy_exc)
+        except Exception as dra_exc:
+            logger.warning("[yellow]DRA failed: %s[/yellow]", dra_exc, exc_info=True)
+            ctx["dra_artifacts"] = {}
+    else:
+        logger.info("  Skipping DRA (set GEAK_DRA_ENABLE=1 to enable)")
+
     # region agent log
     emit_debug_log(
         "preprocessor.py:run_preprocessor:complete",
@@ -1265,6 +1325,10 @@ def run_preprocessor(
                 "profile.json": (output_dir / "profile.json").exists(),
                 "baseline_metrics.json": (output_dir / "baseline_metrics.json").exists(),
                 "COMMANDMENT.md": (output_dir / "COMMANDMENT.md").exists(),
+                "deep_search.md": (output_dir / "deep_search.md").exists(),
+                "deep_search.json": (output_dir / "deep_search.json").exists(),
+                "experimental_directions.md": (output_dir / "experimental_directions.md").exists(),
+                "experimental_directions.json": (output_dir / "experimental_directions.json").exists(),
             },
         },
         hypothesis_id="H3",

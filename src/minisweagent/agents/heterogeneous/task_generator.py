@@ -188,6 +188,7 @@ def generate_tasks(
     commandment_path: Path | None = None,
     baseline_metrics_path: Path | None = None,
     deep_search_path: Path | None = None,
+    experimental_directions_path: Path | None = None,
     previous_results_dir: Path | None = None,
     discovery_path: Path | None = None,
     codebase_context_path: Path | None = None,
@@ -214,6 +215,8 @@ def generate_tasks(
         commandment_path: Path to COMMANDMENT.md.
         baseline_metrics_path: Path to baseline_metrics.json.
         deep_search_path: Path to deep search findings file.
+        experimental_directions_path: Path to DRA experimental_directions
+            file (orthogonal probes that challenge the dominant thesis).
         previous_results_dir: Path to previous round results directory.
         discovery_path: Path to the discovery.json file.
         codebase_context_path: Path to CODEBASE_CONTEXT.md file.
@@ -246,6 +249,7 @@ def generate_tasks(
         commandment_path=commandment_path,
         baseline_metrics_path=baseline_metrics_path,
         deep_search_path=deep_search_path,
+        experimental_directions_path=experimental_directions_path,
         previous_results_dir=previous_results_dir,
         discovery_path=discovery_path,
         codebase_context_path=codebase_context_path,
@@ -281,6 +285,7 @@ def generate_tasks_from_content(
     commandment_content: str | None = None,
     baseline_metrics: dict | None = None,
     deep_search_content: str | None = None,
+    experimental_directions_content: str | None = None,
     previous_results_dir: Path | None = None,
     discovery_path: Path | None = None,
     codebase_context_path: Path | None = None,
@@ -317,6 +322,12 @@ def generate_tasks_from_content(
         if deep_search_path:
             tmp_files.append(deep_search_path)
 
+        experimental_directions_path = (
+            _write_temp(experimental_directions_content, ".md") if experimental_directions_content else None
+        )
+        if experimental_directions_path:
+            tmp_files.append(experimental_directions_path)
+
         return generate_tasks(
             base_task_context=base_task_context,
             agent_class=agent_class,
@@ -331,6 +342,7 @@ def generate_tasks_from_content(
             commandment_path=commandment_path,
             baseline_metrics_path=baseline_metrics_path,
             deep_search_path=deep_search_path,
+            experimental_directions_path=experimental_directions_path,
             previous_results_dir=previous_results_dir,
             discovery_path=discovery_path,
             codebase_context_path=codebase_context_path,
@@ -441,6 +453,7 @@ def _run_task_agent(
     commandment_path: Path | None,
     baseline_metrics_path: Path | None,
     deep_search_path: Path | None,
+    experimental_directions_path: Path | None,
     previous_results_dir: Path | None,
     discovery_path: Path | None,
     codebase_context_path: Path | None = None,
@@ -540,6 +553,9 @@ def _run_task_agent(
             "baseline_metrics_path": str(baseline_metrics_path) if baseline_metrics_path else "",
             "knowledge_base_path": str(kb_path) if kb_path else "",
             "deep_search_path": str(deep_search_path) if deep_search_path else "",
+            "experimental_directions_path": (
+                str(experimental_directions_path) if experimental_directions_path else ""
+            ),
             "previous_results_path": str(prev_results_path) if prev_results_path else "",
             "previous_tasks_path": str(prev_tasks_path) if prev_tasks_path else "",
             "round_evaluations_path": str(round_evals_path) if round_evals_path else "",
@@ -808,6 +824,12 @@ def main():
         help="Path to deep search findings (JSON or Markdown file)",
     )
     parser.add_argument(
+        "--experimental-directions",
+        default=None,
+        metavar="FILE",
+        help="Path to DRA experimental_directions file (Markdown or JSON)",
+    )
+    parser.add_argument(
         "--codebase-context",
         default=None,
         metavar="FILE",
@@ -918,6 +940,9 @@ def main():
     commandment_path = Path(args.commandment).resolve() if args.commandment else None
     baseline_metrics_path = Path(args.baseline_metrics).resolve() if args.baseline_metrics else None
     deep_search_path = Path(args.deep_search).resolve() if args.deep_search else None
+    experimental_directions_path = (
+        Path(args.experimental_directions).resolve() if args.experimental_directions else None
+    )
     previous_results_dir = Path(args.from_results).resolve() if args.from_results else None
     discovery_path = Path(args.from_discovery).resolve() if args.from_discovery else None
     codebase_context_path = Path(args.codebase_context).resolve() if args.codebase_context else None
@@ -937,6 +962,7 @@ def main():
         commandment_path=commandment_path,
         baseline_metrics_path=baseline_metrics_path,
         deep_search_path=deep_search_path,
+        experimental_directions_path=experimental_directions_path,
         previous_results_dir=previous_results_dir,
         discovery_path=discovery_path,
         codebase_context_path=codebase_context_path,
