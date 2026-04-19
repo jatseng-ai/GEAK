@@ -78,7 +78,7 @@ Output:
 Behavior:
 
 - evidence-backed
-- explicit about confidence and uncertainty
+- explicit about what is well supported and what remains open
 - optimized for exploitation and task prioritization
 
 ### 2. `experimental_directions`
@@ -97,7 +97,7 @@ Output:
 Behavior:
 
 - intentionally orthogonal to `deep_search`
-- may be lower confidence, but should still be reasoned and falsifiable
+- may be more speculative, but should still be reasoned and falsifiable
 - optimized for managed exploration rather than pure recommendation
 
 These two artifacts should remain separate. Merging them would make the task generator treat "best current belief" and "useful contrarian probe" as the same kind of signal.
@@ -182,7 +182,6 @@ Each researched question should produce a structured answer containing:
 
 - answer
 - evidence
-- confidence
 - affected files or functions
 - task-generation implications
 - recommended status: `prefer`, `deprioritize`, `reject`, or `open`
@@ -225,7 +224,6 @@ Suggested sections:
 - Prefer first
 - Deprioritize or reject
 - Blindspots still open
-- Confidence notes
 
 The Markdown output should be concise enough to remain useful to the task generator, not a long essay.
 
@@ -286,7 +284,6 @@ Each direction should be short, testable, and structured. Suggested fields:
 - `strategy_family`
 - `target_files_or_functions`
 - `expected_upside`
-- `confidence`
 - `implementation_cost`
 - `kill_criteria`
 - `notes_for_taskgen`
@@ -413,7 +410,7 @@ This avoids introducing a brand-new always-on runtime abstraction too early.
 ## Open Questions
 
 - Should preprocess generate both artifacts by default, or only when a flag is enabled?
-- Should orthogonal directions always be generated, or only after confidence in the main thesis exceeds some threshold?
+- Should orthogonal directions always be generated, or only after the main thesis is well established?
 - Should task generation reserve an experimental slot every round, or only when progress stalls?
 - Should the final task schema include explicit exploration metadata from day one?
 - How much of the final `deep_search` artifact should be optimized for prompt readability versus machine readability?
