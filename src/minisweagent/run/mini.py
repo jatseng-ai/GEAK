@@ -403,6 +403,10 @@ def main(
         gpu_id=parsed_gpu_ids[0] if parsed_gpu_ids else 0,
         model_factory=lambda: get_model(model_name, config.get("model", {})),
         console=console,
+        input_dialect=parsed_config.get("input_dialect"),
+        gluon_feature_mode=parsed_config.get("gluon_feature_mode"),
+        gluon_baseline_profile=parsed_config.get("gluon_baseline_profile"),
+        target_backend=parsed_config.get("target_backend"),
     )
     logger.debug("Preprocess kwargs: %s", _preprocess_kwargs)
 
