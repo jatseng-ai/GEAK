@@ -122,6 +122,34 @@ class TestLoadSkill:
         assert "# Loaded skill: load-me" in result["output"]
         assert "name: load-me" in result["output"]
         assert desc.loaded is True
+        assert "## Skill material paths" not in result["output"]
+
+    def test_load_skill_includes_material_subdirs_when_present(self, tmp_path: Path):
+        skill_dir = tmp_path / "roc"
+        _write_skill(skill_dir, "rocprof", "Profiling.", body="# Body\n")
+        (skill_dir / "docs").mkdir()
+        (skill_dir / "scripts").mkdir()
+        desc = SkillDescriptor(name="rocprof", description="Profiling.", path=skill_dir)
+        rt = _make_runtime({"rocprof": desc})
+        result = rt.load_skill({"content": self._skill_block("rocprof")})
+        assert "## Skill material paths" in result["output"]
+        assert "Additional material for this skill" in result["output"]
+        docs_resolved = str((skill_dir / "docs").resolve())
+        scripts_resolved = str((skill_dir / "scripts").resolve())
+        assert f"`{docs_resolved}`" in result["output"]
+        assert f"`{scripts_resolved}`" in result["output"]
+        assert ".hidden" not in result["output"]  # dot-dir excluded
+
+    def test_load_skill_skips_dot_directories_in_material_list(self, tmp_path: Path):
+        skill_dir = tmp_path / "sk"
+        _write_skill(skill_dir, "x", "d", body="y")
+        (skill_dir / "scripts").mkdir()
+        (skill_dir / ".cache").mkdir()
+        desc = SkillDescriptor(name="x", description="d", path=skill_dir)
+        rt = _make_runtime({"x": desc})
+        out = rt.load_skill({"content": self._skill_block("x")})["output"]
+        assert ".cache" not in out
+        assert "scripts" in out
 
     def test_second_load_leaves_output_empty(self, tmp_path: Path):
         skill_dir = tmp_path / "s"
