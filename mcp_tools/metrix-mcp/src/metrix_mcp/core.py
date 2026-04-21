@@ -6,11 +6,35 @@ Provides hardware metrics, bottleneck classification, and factual observations.
 
 import logging
 import os
+import shutil
+import subprocess
 from typing import Any
 
 from metrix import Metrix
 
 logger = logging.getLogger(__name__)
+
+# RDNA4 archs where GL2C perf counters require an AUTO -> STABLE_STD SMU
+# transition before each profile. Caller is responsible for sudo access.
+_RDNA_ARCHS_NEEDING_SMU_REARM = ("gfx1201", "gfx1151")
+
+
+def _arm_rdna_counters(arch: str, device: str = "all") -> None:
+    if arch not in _RDNA_ARCHS_NEEDING_SMU_REARM:
+        return
+    smi = shutil.which("amd-smi")
+    if smi is None:
+        return
+    # NOTE: On gfx1201, `amd-smi set --gpu N -l auto -l stable_std` DOES flip
+    # PERF_LEVEL, but empirically does NOT arm the GL2C counter block.
+    # Only a transition targeting `--gpu all` arms counters. The `device`
+    # argument is kept for logging/future per-GPU strategies but we always
+    # issue the transition against all GPUs.
+    for level in ("auto", "stable_std"):
+        subprocess.run(
+            ["sudo", "-n", smi, "set", "--gpu", "all", "-l", level],
+            check=False, capture_output=True, timeout=10,
+        )
 
 
 class MetrixTool:
@@ -222,6 +246,7 @@ class MetrixTool:
 
         try:
             profile_level = "quick" if quick else "memory"
+            _arm_rdna_counters(self.profiler.backend.device_specs.arch, device)
             results = self.profiler.profile(
                 command=command,
                 profile=profile_level,
