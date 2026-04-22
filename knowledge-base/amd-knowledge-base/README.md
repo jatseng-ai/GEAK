@@ -74,7 +74,7 @@ knowledge-base/
 ### New to AMD GPUs?
 1. Start with [AMD GPU Architecture](layer-1-hardware/amd-gpu-arch/cdna-architecture.md)
 2. Install [ROCm](layer-2-compute-stack/rocm/rocm-installation.md)
-3. Learn [HIP Basics](layer-2-compute-stack/hip/hip-basics.md)
+3. Learn [HIP GPU Programming Fundamentals](layer-2-compute-stack/hip/hip-gpu-programming-fundamentals.md)
 
 ### Want to Serve LLMs?
 1. Quick: [LLM Inference in 5 min](layer-5-llm/00-quickstart/quickstart-inference.md)
@@ -94,6 +94,11 @@ knowledge-base/
 2. [Kernel optimization](best-practices/performance/kernel-optimization.md)
 3. [ROCm profiling](layer-2-compute-stack/rocm/rocm-profiling.md)
 
+### Writing Custom Kernels?
+1. [Triton on AMD GPUs](layer-3-libraries/compilers/triton-on-rocm.md)
+2. [Triton Gluon on AMD GPUs](layer-3-libraries/compilers/triton-gluon-on-rocm.md)
+3. [Custom Kernels with Triton](layer-5-llm/05-advanced/custom-kernels/triton-kernels.md)
+
 ### Working with ROCm Libraries?
 
 **🆕 ROCm 7.1+ Monorepo**: All ROCm libraries are now in a [unified monorepo](layer-3-libraries/rocm-libraries/rocm-libraries-usage.md)
@@ -109,6 +114,8 @@ knowledge-base/
 **ML/DL Libraries**:
 - [MIOpen](layer-3-libraries/ml-primitives/miopen-usage.md) - Deep learning primitives
 - [RCCL](layer-3-libraries/communications/rccl-usage.md) - Multi-GPU communication
+- [Triton](layer-3-libraries/compilers/triton-on-rocm.md) - Standard Triton kernels on AMD GPUs
+- [Triton Gluon](layer-3-libraries/compilers/triton-gluon-on-rocm.md) - Lower-level Triton-family path with explicit layouts and AMD matrix flows
 
 **Naming Guide**:
 - **roc\*** libraries (rocBLAS, rocFFT): AMD-native, best performance
