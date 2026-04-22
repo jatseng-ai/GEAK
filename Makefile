@@ -8,7 +8,6 @@ install:
 	            mcp_tools/profiler-mcp/ \
 	            mcp_tools/cross-session-memory-mcp/ \
 	            mcp_tools/rag-mcp/
-	python scripts/build_index.py --force
 
 # Full install: core + MCP tools + dev + swe-rex
 install-full:
@@ -18,7 +17,6 @@ install-full:
 	            mcp_tools/profiler-mcp/ \
 	            mcp_tools/cross-session-memory-mcp/ \
 	            mcp_tools/rag-mcp/
-	python scripts/build_index.py --force
 
 # Editable full install (for developers)
 install-dev:
@@ -28,4 +26,3 @@ install-dev:
 	            -e mcp_tools/profiler-mcp/ \
 	            -e mcp_tools/cross-session-memory-mcp/ \
 	            -e mcp_tools/rag-mcp/
-	python scripts/build_index.py --force
