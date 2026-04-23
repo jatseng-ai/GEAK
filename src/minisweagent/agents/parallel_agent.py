@@ -361,11 +361,12 @@ class ParallelAgent(DefaultAgent):
     ) -> list[tuple[int, Any, Any, Any]]:
         """Run multiple parallel agents and return their results.
 
-        Callers must supply ``tasks`` (a list[AgentTask]).  Legacy
-        ``agent_specs``-based dispatch and the identical-copies inline
-        branch were removed once both production call sites
-        (run_homogeneous_agent, run/dispatch) migrated to task-based
-        dispatch via ``pool_runner.build_homogeneous_tasks``.
+        Callers must supply ``tasks`` (a ``list[AgentTask]``).  All
+        execution modes — homogeneous (identical copies), heterogeneous
+        (planner-generated per-task bodies), translate — flow through
+        this task-based entry point.  Identical-copies workloads use
+        ``pool_runner.build_homogeneous_tasks`` to materialise their
+        task list.
         """
         if not tasks:
             raise ValueError(

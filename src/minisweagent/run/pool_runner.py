@@ -1,30 +1,21 @@
 """Single GPU-pool execution path for every pipeline mode.
 
-Before this module existed, three code paths forked to execute parallel work:
+Every mode (homogeneous, heterogeneous, translate) funnels through:
 
-  1. ``run_pool`` (``run/utils/parallel_helpers.py``) — the canonical pool
-     scheduler: M AgentTasks on N GPU slots, overflow queues, per-task
-     labels, worktree reset, WorkingMemory init, patch auto-extract.
-  2. ``run_parallel_heterogeneous`` (``run/utils/parallel_helpers.py``) —
-     legacy 1:1 AgentSpec runner used by the old orchestrator.
-  3. The inline ``else`` branch of ``ParallelAgent.run_parallel`` —
-     identical-copies homogeneous runner that duplicated (2) with a
-     different worktree naming scheme and no priority queue.
+    PipelineContext -> (materialise AgentTask list) -> execute(ctx, tasks) -> run_pool(...)
 
-All three do the same thing under the hood (worktree + env + agent.run +
-log file + trajectory save); the only real differences are task shape
-(``AgentTask`` vs ``AgentSpec`` vs implicit `num_parallel` count) and
-worktree naming.  This module provides a **single** entry point that
-accepts ``AgentTask`` lists and delegates to ``run_pool`` for everything
-else.  Callers that previously held an ``AgentSpec`` list or a bare
-``num_parallel`` count now produce ``AgentTask`` lists via
-``build_homogeneous_tasks`` / ``build_tasks_from_specs``.
+The underlying ``run_pool`` scheduler in ``run/utils/parallel_helpers.py``
+handles worktree + env + agent.run + log file + trajectory save for M
+tasks on N GPU slots with overflow queueing, priority ordering,
+WorkingMemory init, patch auto-extract, and progress reporting.  This
+module is the thin front door that pipeline code calls into.
 
-PipelineContext → (build tasks) → execute(ctx, tasks) → run_pool(...).
+Two producers build task lists today:
 
-No behavior change on its own: this commit only introduces the canonical
-shape so subsequent commits can rewire ``run/mini.py`` and collapse the
-inline homo branch.
+  - ``build_homogeneous_tasks(N, agent_class, body, ...)`` — N identical
+    tasks sharing the same body, used by ``run_homogeneous_agent``.
+  - The heterogeneous planner (``agents/heterogeneous/task_generator``)
+    builds its own AgentTask list from LLM-generated per-task prompts.
 """
 
 from __future__ import annotations
@@ -88,36 +79,6 @@ def build_homogeneous_tasks(
         agent_class.__name__,
     )
     return tasks
-
-
-def build_tasks_from_specs(
-    specs: list,
-    task_body: str,
-    *,
-    default_priority: int = 10,
-) -> list[AgentTask]:
-    """Convert a legacy ``list[AgentSpec]`` into an ``AgentTask`` list.
-
-    The pool scheduler expects ``AgentTask`` — which omits the
-    hard-pinned ``gpu_ids`` that ``AgentSpec`` carried.  Conversion keeps
-    ``num_gpus`` as the number of GPUs each spec originally requested so
-    multi-GPU tasks still get the right slot count.
-    """
-    out: list[AgentTask] = []
-    for idx, spec in enumerate(specs):
-        out.append(
-            AgentTask(
-                agent_class=spec.agent_class,
-                task=task_body,
-                label=(spec.label or f"spec_{idx}"),
-                priority=default_priority,
-                config=dict(spec.config or {}),
-                step_limit=getattr(spec, "step_limit", 0) or 0,
-                cost_limit=getattr(spec, "cost_limit", 0.0) or 0.0,
-                num_gpus=getattr(spec, "num_gpus", 1) or 1,
-            )
-        )
-    return out
 
 
 def execute(
@@ -200,6 +161,5 @@ def execute(
 
 __all__ = [
     "build_homogeneous_tasks",
-    "build_tasks_from_specs",
     "execute",
 ]

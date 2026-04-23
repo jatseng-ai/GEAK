@@ -309,16 +309,20 @@ def run_pool(
 ) -> list[tuple[int, Any, Any, Any]]:
     """Run M tasks across N GPU slots with overflow queuing.
 
-    Unlike run_parallel_heterogeneous (which runs exactly N agents on N GPUs),
-    this function accepts M tasks (where M can be > N) and schedules them across
-    N GPU slots using a thread pool. When a task finishes and frees a GPU slot,
+    Accepts M tasks (where M can be > N) and schedules them across N GPU
+    slots using a thread pool.  When a task finishes and frees a GPU slot,
     the next queued task starts immediately -- like ProcessPoolExecutor.
+
+    This is the single scheduler for every execution mode; callers build
+    an ``AgentTask`` list (via ``pool_runner.build_homogeneous_tasks`` for
+    identical copies or via the heterogeneous planner for per-task
+    bodies) and hand it here.
 
     Args:
         tasks: List of AgentTask objects (from agent_spec.py), sorted by priority.
         gpu_ids: Available GPU device IDs (determines pool size N).
         base_task_content: Fallback task text if a task has no .task set.
-        Other args: Same as run_parallel.
+        Other args: Same as ParallelAgent.run_parallel.
     """
     n_slots = len(gpu_ids)
     n_tasks = len(tasks)
@@ -444,7 +448,7 @@ def run_pool(
 
             # region agent log
             emit_debug_log(
-                "parallel_agent.py:execute_task:before_run",
+                "parallel_helpers.py:execute_task:before_run",
                 "Launching parallel optimization worker",
                 {
                     "task_id": task_id,
@@ -584,7 +588,7 @@ def run_pool(
 
             # region agent log
             emit_debug_log(
-                "parallel_agent.py:execute_task:after_run",
+                "parallel_helpers.py:execute_task:after_run",
                 "Parallel optimization worker returned from agent.run",
                 {
                     "task_id": task_id,
@@ -654,7 +658,7 @@ def run_pool(
         futures = {executor.submit(execute_task, tid, task): tid for tid, task in sorted_tasks}
         # region agent log
         emit_debug_log(
-            "parallel_agent.py:_run_pool:futures_submitted",
+            "parallel_helpers.py:run_pool:futures_submitted",
             "Submitted pool tasks to ThreadPoolExecutor",
             {
                 "n_slots": n_slots,
@@ -670,7 +674,7 @@ def run_pool(
                 results.append(r)
                 # region agent log
                 emit_debug_log(
-                    "parallel_agent.py:_run_pool:future_completed",
+                    "parallel_helpers.py:run_pool:future_completed",
                     "Pool future completed successfully",
                     {
                         "task_id": futures[future],
@@ -685,7 +689,7 @@ def run_pool(
                 logger.error("Error in pool task %d: %s", task_id, e, exc_info=True)
                 # region agent log
                 emit_debug_log(
-                    "parallel_agent.py:_run_pool:future_exception",
+                    "parallel_helpers.py:run_pool:future_exception",
                     "Pool future raised exception while collecting result",
                     {
                         "task_id": task_id,
@@ -702,8 +706,8 @@ def run_pool(
 
     # region agent log
     emit_debug_log(
-        "parallel_agent.py:_run_pool:after_all_futures",
-        "All pool futures drained and _run_pool is returning",
+        "parallel_helpers.py:run_pool:after_all_futures",
+        "All pool futures drained and run_pool is returning",
         {
             "results_count": len(results),
             "task_ids_completed": sorted(

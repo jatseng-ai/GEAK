@@ -8,10 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from minisweagent.agents.agent_spec import AgentSpec, AgentTask
+from minisweagent.agents.agent_spec import AgentTask
 from minisweagent.run.pool_runner import (
     build_homogeneous_tasks,
-    build_tasks_from_specs,
     execute,
 )
 from minisweagent.run.unified import PipelineContext
@@ -66,36 +65,6 @@ def test_build_homogeneous_tasks_custom_args():
 def test_build_homogeneous_tasks_rejects_zero():
     with pytest.raises(ValueError, match="num_parallel must be >= 1"):
         build_homogeneous_tasks(num_parallel=0, agent_class=_FakeAgent, task_body="x")
-
-
-# ── build_tasks_from_specs ────────────────────────────────────────────
-
-
-def test_build_tasks_from_specs_copies_every_field():
-    spec = AgentSpec(
-        agent_class=_FakeAgent,
-        gpu_ids=[0, 1],
-        config={"mode": "yolo"},
-        step_limit=50,
-        cost_limit=3.5,
-        label="fusion",
-    )
-    tasks = build_tasks_from_specs([spec], task_body="body")
-    assert len(tasks) == 1
-    t = tasks[0]
-    assert t.agent_class is _FakeAgent
-    assert t.task == "body"
-    assert t.label == "fusion"
-    assert t.config == {"mode": "yolo"}
-    assert t.step_limit == 50
-    assert t.cost_limit == 3.5
-    assert t.num_gpus == 2  # derived from len(gpu_ids)
-
-
-def test_build_tasks_from_specs_fallback_label():
-    spec = AgentSpec(agent_class=_FakeAgent, gpu_ids=[0])
-    tasks = build_tasks_from_specs([spec, spec], task_body="x")
-    assert [t.label for t in tasks] == ["spec_0", "spec_1"]
 
 
 # ── execute ───────────────────────────────────────────────────────────
