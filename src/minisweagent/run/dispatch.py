@@ -175,10 +175,10 @@ def task_file_to_agent_task(task_file: Path):
     meta, body = read_task_file(task_file)
 
     from minisweagent.agents.agent_spec import _agent_type_to_class, filter_agent_type
-    from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
+    from minisweagent.agents.optimization_agent import OptimizationAgent
 
     agent_type = filter_agent_type(meta.get("agent_type", "strategy_agent"))
-    agent_class = _agent_type_to_class().get(agent_type, StrategyInteractiveAgent)
+    agent_class = _agent_type_to_class().get(agent_type, OptimizationAgent)
 
     try:
         inherited_step_limit = int(os.environ.get("GEAK_AGENT_STEP_LIMIT", "200"))

@@ -203,9 +203,9 @@ class TestRunHomogeneousAgent:
 
             mock_parallel.assert_called_once()
             call_kwargs = mock_parallel.call_args[1]
-            from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
+            from minisweagent.agents.optimization_agent import OptimizationAgent
 
-            assert call_kwargs.get("agent_class") == StrategyInteractiveAgent
+            assert call_kwargs.get("agent_class") == OptimizationAgent
 
     def test_run_homogeneous_agent_with_strategy_manager_disabled(self, mock_model, mock_env, base_config, temp_repo):
         """Test that strategy interactive agent is used when strategy_manager is disabled."""
@@ -236,11 +236,11 @@ class TestRunHomogeneousAgent:
 
             # Verify ParallelAgent was called
             mock_parallel.assert_called_once()
-            # GEAK homogeneous mode always uses StrategyInteractiveAgent.
+            # GEAK homogeneous mode always uses OptimizationAgent.
             call_kwargs = mock_parallel.call_args[1]
-            from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
+            from minisweagent.agents.optimization_agent import OptimizationAgent
 
-            assert call_kwargs.get("agent_class") == StrategyInteractiveAgent
+            assert call_kwargs.get("agent_class") == OptimizationAgent
 
     def test_run_homogeneous_agent_num_parallel_from_param(self, mock_model, mock_env, base_config, temp_repo):
         """Test that num_parallel parameter takes precedence."""

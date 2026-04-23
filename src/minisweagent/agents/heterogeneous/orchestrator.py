@@ -192,7 +192,7 @@ def run_heterogeneous_orchestrator(
     ``run/orchestrator.py:run_orchestrator`` when ``heterogeneous=True``.
     """
     from minisweagent.agents.heterogeneous.task_generator import _extract_kernel_meta
-    from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
+    from minisweagent.agents.optimization_agent import OptimizationAgent
     from minisweagent.run.postprocess.results import (
         finalize_run,
         post_round_evaluate,
@@ -228,7 +228,7 @@ def run_heterogeneous_orchestrator(
         "gpu_ids": gpu_ids,
         "model": model,
         "model_factory": model_factory,
-        "agent_class": StrategyInteractiveAgent,
+        "agent_class": OptimizationAgent,
         "toolruntime": toolruntime,
     }
 

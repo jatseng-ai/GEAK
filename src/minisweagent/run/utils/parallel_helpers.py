@@ -526,10 +526,11 @@ def run_pool(
             cfg = agent_config.copy()
             cfg.update(task.config)
             cfg["patch_output_dir"] = str(task_patch_dir)
-            # Only set interactive-mode fields for agents that accept them
-            from minisweagent.agents.interactive import InteractiveAgent
+            # Only set mode/confirm_exit for agents whose config supports them
+            # (OptimizationAgent accepts both; DefaultAgent-only agents skip this).
+            from minisweagent.agents.optimization_agent import OptimizationAgent
 
-            if issubclass(task.agent_class, InteractiveAgent):
+            if issubclass(task.agent_class, OptimizationAgent):
                 cfg.setdefault("mode", "yolo")
                 cfg.setdefault("confirm_exit", False)
             if task.step_limit:

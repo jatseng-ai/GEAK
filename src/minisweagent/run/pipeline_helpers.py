@@ -1,9 +1,9 @@
 """Shared helpers for the GEAK preprocessing and orchestration pipelines.
 
-All CLI entry points (``geak``, ``geak-preprocess``, ``geak-orchestrate``,
-``run-tasks``, ``task-generator``) import from this module so that harness
-extraction, validation, profiling, model loading, agent filtering, and
-pipeline-context injection are always identical regardless of entry point.
+Pipeline stages (discover -> harness -> baseline -> profile -> optimize) all
+import from this module so that harness extraction, validation, profiling,
+model loading, agent filtering, and pipeline-context injection are always
+identical regardless of where they are invoked from.
 """
 
 from __future__ import annotations

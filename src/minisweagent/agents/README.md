@@ -1,6 +1,5 @@
 # Agent implementations
 
-* `default.py` - Minimal default agent implementation.
-* `interactive.py` - Extends `default.py` with some minimal human-in-the-loop functionality (confirm actions, etc.).
-* `interactive_textual.py` - Extends `default.py` with [Textual](https://textual.textualize.io/) for an interactive TUI.
-   (this is a more complicated UI).
+* `optimization_agent.py` - Main kernel-optimization agent (standalone; used by homogeneous + heterogeneous pipelines).
+* `default.py` - Base class used by preprocess subagents (`SelectPatchAgent`, `UnitTestAgent`, `ShapeFixerAgent`).
+* `parallel_agent.py` - Orchestrator shell that spawns N `OptimizationAgent` workers across a GPU pool.

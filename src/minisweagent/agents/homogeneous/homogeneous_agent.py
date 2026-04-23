@@ -15,7 +15,7 @@ from pathlib import Path
 from rich.console import Console
 
 from minisweagent.agents.parallel_agent import BestPatchResult, ParallelAgent
-from minisweagent.agents.strategy_interactive import StrategyInteractiveAgent
+from minisweagent.agents.optimization_agent import OptimizationAgent
 from minisweagent.models import get_model
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def run_homogeneous_agent(
         raise ValueError(f"Repository path does not exist: {final_repo}")
 
     # GEAK homogeneous flow always uses strategy interactive agent.
-    base_agent_class = StrategyInteractiveAgent
+    base_agent_class = OptimizationAgent
 
     # Configure agent for homogeneous mode
     agent_config["mode"] = "yolo"
