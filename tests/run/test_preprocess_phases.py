@@ -178,6 +178,27 @@ class TestOrchestratorFlow:
 # ── Orchestrator integration with legacy fallback ─────────────────────
 
 
+class TestCliUsesOrchestrator:
+    """Regression guard: cli.py must import the preprocessor entry from
+    the orchestrator shim, not the legacy monolith directly.  Anyone
+    who reverts the flip gets a failing test pointing at the right
+    file.
+    """
+
+    def test_cli_imports_run_preprocessor_from_orchestrator(self) -> None:
+        from minisweagent import cli
+
+        # Inspect the imported ``run_preprocessor`` symbol
+        rp = cli.run_preprocessor
+        # The shim is exported as ``run_preprocessor_via_orchestrator``
+        # in the orchestrator module; after ``as run_preprocessor``
+        # aliasing the __name__ attribute still reveals the real source.
+        assert rp.__module__ == "minisweagent.run.preprocess.orchestrator", (
+            f"cli.run_preprocessor must come from the orchestrator shim; "
+            f"got {rp.__module__}"
+        )
+
+
 class TestLegacyFallback:
     def test_falls_back_when_phases_leave_mandatory_outputs_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

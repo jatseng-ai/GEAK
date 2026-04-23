@@ -39,7 +39,9 @@ from minisweagent.config import builtin_config_dir, get_config_path
 from minisweagent.environments import get_environment_class
 from minisweagent.models import get_model
 from minisweagent.run.extra.config import configure_if_first_time
-from minisweagent.run.preprocess.preprocessor import run_preprocessor
+from minisweagent.run.preprocess.orchestrator import (
+    run_preprocessor_via_orchestrator as run_preprocessor,
+)
 from minisweagent.run.utils.task_parser import (
     _resolve_path_case,
     display_parsed_config,
