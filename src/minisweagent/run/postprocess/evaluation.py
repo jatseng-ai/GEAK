@@ -591,7 +591,7 @@ def evaluate_round_best(
 
     if not candidates:
         # Fallback: check for best_patch.diff directly in the round directory.
-        # The heterogeneous orchestrator LLM sometimes creates patches directly
+        # The planned-mode orchestrator LLM sometimes creates patches directly
         # (e.g. when dispatch_tasks fails and it edits kernel.py manually).
         for diff_name in ("best_patch.diff", "best_patch.patch"):
             fallback_patch = results_dir / diff_name

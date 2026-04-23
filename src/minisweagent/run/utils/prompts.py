@@ -48,7 +48,13 @@ PARSE_PIPELINE_PARAMS_USER_TEMPLATE = """Analyze the following task and extract 
 Extract the following (return null if not found or not applicable):
 1. kernel_url: The path or URL to the SPECIFIC KERNEL FILE to optimize (e.g., "/path/to/silu.hip", "/workspace/kernels/matmul.py", "https://github.com/org/repo/blob/main/kernel.py"). This is the kernel source file itself, NOT the repository root directory.
 2. preprocess_dir: Path to a directory containing existing preprocessing artifacts (e.g., "/path/to/geak_output"). Only set if the user explicitly mentions reusing existing artifacts.
-3. heterogeneous: Whether to use heterogeneous mode (diverse optimization strategies across GPUs). Set true if the user mentions "heterogeneous", false if they mention "homogeneous", null if not mentioned.
+3. mode: Execution mode for the optimization run.  One of:
+     - "fixed"    — run the same task body across N parallel agents (identical copies).  Set if the user asks for replicated / parallel / best-of-N runs of a single strategy.
+     - "planned"  — let the planner LLM generate N diverse strategies and run each in its own agent.  Set if the user asks for "diverse strategies", "planner", or wording that suggests multiple distinct approaches.
+     - "translate"— source→target language translation of the kernel (e.g. CUDA→Triton).  Set if the user asks to translate, port, or convert a kernel.
+     - "auto"     — let the pipeline pick fixed vs planned.  This is the default; only set another value if the user is explicit.
+   Return null if the user is not explicit about the mode.
+   Legacy terms: "heterogeneous" should map to "planned"; "homogeneous" to "fixed".
 4. max_rounds: Maximum number of optimization rounds (integer). Only set if explicitly mentioned.
 5. start_round: Round number to resume from (integer, 1-based). Only set if explicitly mentioned.
 6. pipeline_intent: true if the task describes kernel optimization, performance improvement, GPU kernel work, or profiling. false if it describes general coding tasks like bug fixes, refactoring, or feature additions.
@@ -57,7 +63,7 @@ Return ONLY a valid JSON object. Example:
 {{{{
   "kernel_url": "/workspace/repo/kernels/silu.hip",
   "preprocess_dir": null,
-  "heterogeneous": null,
+  "mode": null,
   "max_rounds": 5,
   "start_round": null,
   "pipeline_intent": true

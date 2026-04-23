@@ -175,7 +175,7 @@ class AmdLlmModelBase:
         return content
 
     def set_tools(self, tools: list[dict[str, Any]]) -> None:
-        """Replace the active tool schema (used by strategy / heterogeneous agents)."""
+        """Replace the active tool schema (used by strategy / planned-mode agents)."""
         self.tools = filter_tools_for_amd_config(
             tools,
             profiling=self.config.profiling,

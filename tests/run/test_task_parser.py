@@ -152,22 +152,40 @@ class TestParsePipelineParams:
         payload = {
             "kernel_url": "/tmp/a.hip",
             "preprocess_dir": None,
-            "heterogeneous": True,
+            "mode": "planned",
             "max_rounds": 3,
             "start_round": 1,
             "pipeline_intent": True,
         }
         out = tp.parse_pipeline_params("t", self._Model(json.dumps(payload)))
-        assert out["heterogeneous"] is True
+        assert out["mode"] == "planned"
         assert out["max_rounds"] == 3
         assert out["start_round"] == 1
         assert out["pipeline_intent"] is True
+
+    def test_legacy_heterogeneous_bool_translates_to_mode(self) -> None:
+        # Backward-compat: older LLM extractors still emit the bool.
+        payload_true = {
+            "kernel_url": None,
+            "preprocess_dir": None,
+            "heterogeneous": True,
+            "max_rounds": None,
+            "start_round": None,
+            "pipeline_intent": True,
+        }
+        out_true = tp.parse_pipeline_params("t", self._Model(json.dumps(payload_true)))
+        assert out_true["mode"] == "planned"
+
+        payload_false = dict(payload_true)
+        payload_false["heterogeneous"] = False
+        out_false = tp.parse_pipeline_params("t", self._Model(json.dumps(payload_false)))
+        assert out_false["mode"] == "fixed"
 
     def test_coerces_numeric_strings(self) -> None:
         payload = {
             "kernel_url": None,
             "preprocess_dir": None,
-            "heterogeneous": None,
+            "mode": None,
             "max_rounds": "10",
             "start_round": "2",
             "pipeline_intent": False,
@@ -180,7 +198,7 @@ class TestParsePipelineParams:
         payload = {
             "kernel_url": None,
             "preprocess_dir": None,
-            "heterogeneous": None,
+            "mode": None,
             "max_rounds": "nope",
             "start_round": None,
             "pipeline_intent": False,

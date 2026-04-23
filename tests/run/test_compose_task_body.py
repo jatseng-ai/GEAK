@@ -12,7 +12,7 @@ def test_compose_passes_prompt_through_when_memory_empty():
         body = compose_task_body(
             ComposeInputs(
                 user_prompt="Optimize kernel X",
-                mode="homogeneous",
+                mode="fixed",
                 preprocess_ctx={"kernel_path": "/tmp/x.py"},
             )
         )
@@ -25,7 +25,7 @@ def test_compose_appends_memory_when_retriever_returns_context():
         body = compose_task_body(
             ComposeInputs(
                 user_prompt="Optimize kernel X",
-                mode="homogeneous",
+                mode="fixed",
                 preprocess_ctx={"kernel_path": "/tmp/x.py"},
             )
         )
@@ -42,7 +42,7 @@ def test_compose_swallows_memory_errors_and_keeps_prompt():
         body = compose_task_body(
             ComposeInputs(
                 user_prompt="Optimize kernel X",
-                mode="homogeneous",
+                mode="fixed",
                 preprocess_ctx={"kernel_path": "/tmp/x.py"},
             )
         )
@@ -54,7 +54,7 @@ def test_compose_appends_extra_addenda():
         body = compose_task_body(
             ComposeInputs(
                 user_prompt="Optimize kernel X",
-                mode="heterogeneous",
+                mode="planned",
                 preprocess_ctx={"kernel_path": "/tmp/x.py"},
                 extra_addenda=["  ## CONSTRAINTS\n- no fp64  ", "", "  ## DIRECTIVES\n- try ILP  "],
             )
@@ -77,7 +77,7 @@ def test_compose_parses_stringified_baseline_json():
         compose_task_body(
             ComposeInputs(
                 user_prompt="x",
-                mode="homogeneous",
+                mode="fixed",
                 preprocess_ctx={
                     "kernel_path": "/tmp/k.py",
                     "baseline_metrics": '{"bottleneck": "memory-bound", "peak_bw": 400}',
@@ -94,7 +94,7 @@ def test_compose_tolerates_unparsable_baseline_string():
         body = compose_task_body(
             ComposeInputs(
                 user_prompt="x",
-                mode="homogeneous",
+                mode="fixed",
                 preprocess_ctx={
                     "kernel_path": "/tmp/k.py",
                     "baseline_metrics": "this is not json",

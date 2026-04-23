@@ -32,7 +32,7 @@ _EMPTY_TASK_INFO: dict = {
 _EMPTY_PIPELINE_PARAMS: dict = {
     "kernel_url": None,
     "preprocess_dir": None,
-    "heterogeneous": None,
+    "mode": None,
     "max_rounds": None,
     "start_round": None,
     "pipeline_intent": False,
@@ -150,12 +150,41 @@ def _normalize_parsed_task_info(parsed: dict) -> dict:
     return result
 
 
+_VALID_MODES: frozenset[str] = frozenset({"fixed", "planned", "auto", "translate"})
+
+
+def _normalize_mode_field(raw: object) -> str | None:
+    """Map raw LLM output (bool legacy ``heterogeneous`` or new ``mode`` str) to canonical mode string."""
+    if raw is None:
+        return None
+    # Legacy boolean: True -> planned, False -> fixed.
+    if isinstance(raw, bool):
+        return "planned" if raw else "fixed"
+    if isinstance(raw, str):
+        canon = raw.strip().lower()
+        if canon in _VALID_MODES:
+            return canon
+        # Tolerate legacy vocabulary
+        if canon == "heterogeneous":
+            return "planned"
+        if canon == "homogeneous":
+            return "fixed"
+        logger.debug("parse_pipeline_params: ignoring unknown mode value %r", raw)
+    return None
+
+
 def _normalize_pipeline_params_from_parsed(parsed: dict) -> dict:
     """Normalize paths and integer fields after JSON parse."""
+    # Prefer explicit ``mode`` from the LLM; fall back to legacy
+    # ``heterogeneous`` boolean so older prompts keep working.
+    mode_value = _normalize_mode_field(parsed.get("mode"))
+    if mode_value is None:
+        mode_value = _normalize_mode_field(parsed.get("heterogeneous"))
+
     result = {
         "kernel_url": parsed.get("kernel_url"),
         "preprocess_dir": parsed.get("preprocess_dir"),
-        "heterogeneous": parsed.get("heterogeneous"),
+        "mode": mode_value,
         "max_rounds": parsed.get("max_rounds"),
         "start_round": parsed.get("start_round"),
         "pipeline_intent": bool(parsed.get("pipeline_intent", False)),
@@ -245,7 +274,8 @@ def parse_pipeline_params(task_content: str, model) -> dict:
     Extracts:
     - kernel_url: Path or URL to the specific kernel file to optimize
     - preprocess_dir: Path to existing preprocessing artifacts
-    - heterogeneous: Whether to use heterogeneous (diverse strategy) mode
+    - mode: Execution mode (fixed | planned | auto | translate).  Legacy
+      boolean ``heterogeneous`` is accepted and translated to planned/fixed.
     - max_rounds: Maximum optimization rounds
     - start_round: Round to resume from
     - pipeline_intent: Whether the task describes kernel optimization work

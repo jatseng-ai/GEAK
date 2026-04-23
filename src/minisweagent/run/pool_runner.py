@@ -1,6 +1,6 @@
 """Single GPU-pool execution path for every pipeline mode.
 
-Every mode (homogeneous, heterogeneous, translate) funnels through:
+Every mode (fixed, planned, auto, translate) funnels through:
 
     PipelineContext -> (materialise AgentTask list) -> execute(ctx, tasks) -> run_pool(...)
 
@@ -13,9 +13,9 @@ module is the thin front door that pipeline code calls into.
 Two producers build task lists today:
 
   - ``build_homogeneous_tasks(N, agent_class, body, ...)`` — N identical
-    tasks sharing the same body, used by ``run_homogeneous_agent``.
-  - The heterogeneous planner (``agents/heterogeneous/task_generator``)
-    builds its own AgentTask list from LLM-generated per-task prompts.
+    tasks sharing the same body, used by the ``fixed`` mode dispatcher.
+  - The planner (``agents/heterogeneous/task_generator``) builds its own
+    AgentTask list from LLM-generated per-task prompts in ``planned`` mode.
 """
 
 from __future__ import annotations
@@ -46,16 +46,14 @@ def build_homogeneous_tasks(
 ) -> list[AgentTask]:
     """Materialize ``num_parallel`` identical ``AgentTask`` objects.
 
-    Collapsing the inline-homo branch of ``ParallelAgent.run_parallel``
-    means ``run_pipeline(mode="homogeneous")`` will ask for a list of
-    identical tasks and hand them to the pool scheduler.  The scheduler
-    then treats these tasks exactly like heterogeneous planner-generated
-    tasks — same worktrees, same logs, same priority order, same GPU
-    acquire/release.
+    ``run_pipeline(mode="fixed")`` asks for a list of identical tasks and
+    hands them to the pool scheduler.  The scheduler then treats these
+    tasks exactly like planner-generated (``planned``) tasks — same
+    worktrees, same logs, same priority order, same GPU acquire/release.
 
     Labels follow the existing convention (``parallel_0``, ``parallel_1``,
     ...) so patch directories written by the pool remain byte-compatible
-    with the legacy homo runner.
+    with the legacy identical-copies runner.
     """
     if num_parallel < 1:
         raise ValueError(f"num_parallel must be >= 1, got {num_parallel}")

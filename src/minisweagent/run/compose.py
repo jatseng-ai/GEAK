@@ -3,26 +3,35 @@
 Before this module existed the task body was assembled in two very different
 places depending on mode:
 
-  - **homogeneous**  — inside ``run/mini.py`` by concatenating the user prompt
-    with ``assemble_memory_context`` output.
-  - **heterogeneous** — inside ``agents/heterogeneous/orchestrator.py`` and
+  - **fixed**   — inside ``run/mini.py`` by concatenating the user prompt
+    with ``assemble_memory_context`` output (formerly "homogeneous" — one
+    prompt replicated across N parallel agents).
+  - **planned** — inside ``agents/heterogeneous/orchestrator.py`` and
     ``agents/heterogeneous/task_generator.py`` by calling out to the planner
     LLM, which produced per-task bodies that already included the commandment
-    and user constraints.
+    and user constraints (formerly "heterogeneous" — N planned strategies).
 
 Both modes eventually fed identical downstream stages (``ParallelAgent`` ->
 ``OptimizationAgent``), so the divergence was purely presentational.  This
 module centralizes the composition in one function so that:
 
-  - new modes (e.g. ``translate``) get a consistent entrypoint,
+  - new modes (``auto`` routes per round; ``translate`` runs verify-retry)
+    get a consistent entrypoint,
   - cross-session memory injection is applied identically,
   - the KernelLanguage-system-prompt binding (Triton / HIP / ...) is resolved
     in exactly one place.
 
-The function deliberately does not call the planner LLM.  In
-heterogeneous mode it assembles the *base* task body shared by every planner
-sub-task; the planner itself still lives in ``task_generator.py`` and is
-invoked from ``run/unified.py``.
+The function deliberately does not call the planner LLM.  In ``planned``
+mode it assembles the *base* task body shared by every planner sub-task;
+the planner itself still lives in ``task_generator.py`` and is invoked
+from ``run/unified.py``.
+
+Mode vocabulary (matches the end-state execution plan):
+
+  - ``fixed``     — one task body, replicated across ``num_parallel`` copies
+  - ``planned``   — N planner-generated task bodies (one per strategy)
+  - ``auto``      — controller picks ``fixed``-vs-``planned`` per round
+  - ``translate`` — source→target language translation loop (verify-retry)
 """
 
 from __future__ import annotations
@@ -33,7 +42,7 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-Mode = Literal["homogeneous", "heterogeneous", "translate"]
+Mode = Literal["fixed", "planned", "auto", "translate"]
 
 
 @dataclass

@@ -362,7 +362,7 @@ class ParallelAgent(DefaultAgent):
         """Run multiple parallel agents and return their results.
 
         Callers must supply ``tasks`` (a ``list[AgentTask]``).  All
-        execution modes — homogeneous (identical copies), heterogeneous
+        execution modes — fixed (identical copies), planned
         (planner-generated per-task bodies), translate — flow through
         this task-based entry point.  Identical-copies workloads use
         ``pool_runner.build_homogeneous_tasks`` to materialise their

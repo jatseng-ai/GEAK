@@ -41,7 +41,7 @@ def test_resolve_tools_disables_rag_when_flag_off():
             raise AssertionError("should not be called when rag is off")
 
     with patch("minisweagent.tools.tools_runtime.ToolRuntime", _FakeRuntime):
-        runtime = _resolve_tools(ctx, mode="homogeneous")
+        runtime = _resolve_tools(ctx, mode="fixed")
     assert runtime.disabled == [["query", "optimize"]]
 
 
@@ -60,7 +60,7 @@ def test_resolve_tools_wraps_rag_when_enabled():
             self.wrapped = True
 
     with patch("minisweagent.tools.tools_runtime.ToolRuntime", _FakeRuntime):
-        runtime = _resolve_tools(ctx, mode="heterogeneous")
+        runtime = _resolve_tools(ctx, mode="planned")
     assert runtime.wrapped is True
     assert runtime.disabled == []
 
@@ -77,7 +77,7 @@ def test_pipeline_translate_mode_not_implemented():
         run_pipeline(ctx, mode="translate")
 
 
-def test_pipeline_homogeneous_composes_body_and_delegates():
+def test_pipeline_fixed_composes_body_and_delegates():
     ctx = _make_ctx(
         config={"agent": {"step_limit": 10}},
         test_command="python test_kernel.py",
@@ -99,7 +99,7 @@ def test_pipeline_homogeneous_composes_body_and_delegates():
     ), patch(
         "minisweagent.tools.tools_runtime.ToolRuntime",
     ):
-        result = run_pipeline(ctx, mode="homogeneous")
+        result = run_pipeline(ctx, mode="fixed")
 
     assert result == "FAKE_RESULT"
     assert captured["task_content"] == "Optimize kernel X"
@@ -108,7 +108,7 @@ def test_pipeline_homogeneous_composes_body_and_delegates():
     assert captured["agent_config"]["save_patch"] is True
 
 
-def test_pipeline_heterogeneous_merges_addenda_into_commandment():
+def test_pipeline_planned_merges_addenda_into_commandment():
     ctx = _make_ctx(
         preprocess_ctx={
             "kernel_path": "/tmp/k.py",
@@ -122,18 +122,72 @@ def test_pipeline_heterogeneous_merges_addenda_into_commandment():
 
     def _fake_run_orchestrator(**kwargs):
         captured.update(kwargs)
-        return "HETERO_RESULT"
+        return "PLANNED_RESULT"
 
     with patch(
         "minisweagent.run.orchestrator.run_orchestrator",
         _fake_run_orchestrator,
     ), patch("minisweagent.tools.tools_runtime.ToolRuntime"):
-        result = run_pipeline(ctx, mode="heterogeneous")
+        result = run_pipeline(ctx, mode="planned")
 
-    assert result == "HETERO_RESULT"
+    assert result == "PLANNED_RESULT"
+    # run_orchestrator still takes a legacy ``heterogeneous=True`` kwarg
+    # until its internals are renamed; verify unified.py bridges correctly.
     assert captured["heterogeneous"] is True
     pctx = captured["preprocess_ctx"]
     assert pctx["rag_enabled"] is True
     assert pctx["user_instructions"] == "Optimize kernel X"
     assert "BASE COMMANDMENT" in pctx["commandment"]
     assert "## DIRECTIVES" in pctx["commandment"]
+
+
+def test_pipeline_auto_routes_triton_to_planned():
+    ctx = _make_ctx(
+        preprocess_ctx={
+            "kernel_path": "/tmp/k.py",
+            "discovery": {"kernel": {"type": "triton"}},
+            "commandment": "BASE",
+        },
+    )
+
+    captured: dict = {}
+
+    def _fake_run_orchestrator(**kwargs):
+        captured.update(kwargs)
+        return "PLANNED_RESULT"
+
+    with patch(
+        "minisweagent.run.orchestrator.run_orchestrator",
+        _fake_run_orchestrator,
+    ), patch("minisweagent.tools.tools_runtime.ToolRuntime"):
+        result = run_pipeline(ctx, mode="auto")
+
+    assert result == "PLANNED_RESULT"
+    assert captured["heterogeneous"] is True
+
+
+def test_pipeline_auto_routes_hip_to_fixed():
+    ctx = _make_ctx(
+        preprocess_ctx={
+            "kernel_path": "/tmp/k.py",
+            "discovery": {"kernel": {"type": "hip"}},
+        },
+    )
+
+    captured: dict = {}
+
+    def _fake_run_homogeneous_agent(**kwargs):
+        captured.update(kwargs)
+        return "FIXED_RESULT"
+
+    with patch(
+        "minisweagent.agents.homogeneous.homogeneous_agent.run_homogeneous_agent",
+        _fake_run_homogeneous_agent,
+    ), patch(
+        "minisweagent.memory.integration.assemble_memory_context",
+        return_value="",
+    ), patch("minisweagent.tools.tools_runtime.ToolRuntime"):
+        result = run_pipeline(ctx, mode="auto")
+
+    assert result == "FIXED_RESULT"
+    assert captured["task_content"] == "Optimize kernel X"

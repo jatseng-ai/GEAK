@@ -298,7 +298,7 @@ def post_round_evaluate(
 ) -> Any:
     """Run post-round evaluation and update ctx with best-patch tracking.
 
-    Shared by both homogeneous and heterogeneous orchestrators.  After
+    Shared by both fixed-mode and planned-mode orchestrators.  After
     each round completes:
 
     1. Calls ``evaluate_round_best`` to run FULL_BENCHMARK + PROFILE on

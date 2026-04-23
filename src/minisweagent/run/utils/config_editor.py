@@ -657,13 +657,14 @@ def prompt_missing_pipeline_params(
 
 def _display_pipeline_params(params: dict, console) -> None:
     """Display extracted pipeline parameters."""
+    # Accept legacy ``heterogeneous`` bool as a fallback for older extracts.
+    mode_value = params.get("mode")
+    if mode_value is None and params.get("heterogeneous") is not None:
+        mode_value = "planned" if params["heterogeneous"] else "fixed"
     fields = [
         ("kernel_url", params.get("kernel_url") or "[dim]not detected[/dim]"),
         ("preprocess_dir", params.get("preprocess_dir") or "[dim]not set[/dim]"),
-        (
-            "heterogeneous",
-            str(params.get("heterogeneous")) if params.get("heterogeneous") is not None else "[dim]auto-detect[/dim]",
-        ),
+        ("mode", str(mode_value) if mode_value is not None else "[dim]auto[/dim]"),
         ("max_rounds", str(params.get("max_rounds")) if params.get("max_rounds") is not None else "[dim]default[/dim]"),
         ("start_round", str(params.get("start_round")) if params.get("start_round") is not None else "[dim]1[/dim]"),
     ]

@@ -1,18 +1,31 @@
-"""Unified pipeline entry for homogeneous + heterogeneous + translate modes.
+"""Unified pipeline entry for fixed + planned + auto + translate modes.
 
-Historically homogeneous (``run_homogeneous_agent``) and heterogeneous
+Historically fixed (``run_homogeneous_agent``) and planned
 (``run_orchestrator``) took very different paths through the codebase even
 though they ultimately drove the same optimisation loop.  This module
-collapses the surface area exposed to ``run/mini.py``:
+collapses the surface area exposed to the CLI:
 
     final_report = run_pipeline(ctx, mode)
+
+Mode vocabulary (matches the execution plan end state):
+
+  - ``fixed``     — one task body, replicated across ``num_parallel`` copies
+                    (was "homogeneous" in the legacy vocabulary).
+  - ``planned``   — N planner-generated task bodies (one per strategy)
+                    dispatched in parallel (was "heterogeneous").
+  - ``auto``      — default.  Picks ``fixed`` or ``planned`` per kernel
+                    based on language heuristics (Triton→planned,
+                    HIP→fixed); future iterations will let the controller
+                    select per-round.
+  - ``translate`` — source→target language translation loop (verify-retry);
+                    currently raises NotImplementedError until PR-60 lands.
 
 ``run_pipeline`` is responsible for resolving the tool set, composing the
 task body (via ``run/compose.py``), and dispatching to the shared pool
 runner.  For the moment the body still delegates to the existing
 ``run_orchestrator`` / ``run_homogeneous_agent`` helpers so behavior is byte
 compatible; those helpers will be collapsed into ``run/pool_runner.py`` in
-the next commit, after which this file becomes the only call site for
+a later commit, after which this file becomes the only call site for
 ParallelAgent entry points.
 """
 
@@ -21,7 +34,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
 from minisweagent.run.compose import ComposeInputs, Mode, compose_task_body
 
@@ -95,15 +108,34 @@ def _resolve_tools(ctx: PipelineContext, mode: Mode):
 # ── Pipeline dispatch ─────────────────────────────────────────────────
 
 
+def _resolve_auto_mode(ctx: PipelineContext) -> Mode:
+    """Map ``auto`` to a concrete ``fixed``/``planned`` decision.
+
+    Current heuristic: Triton kernels (which benefit from diverse strategy
+    planning because they have a rich optimization surface) go through the
+    planner; everything else (HIP, CUDA, unknown) defaults to identical
+    parallel copies.  Future revisions will let a controller pick per
+    round based on KB state and available GPUs.
+    """
+    discovery = ctx.preprocess_ctx.get("discovery") or {}
+    kernel_info = discovery.get("kernel") or {}
+    inferred = kernel_info.get("type") or ctx.kernel_language or "unknown"
+    if str(inferred).strip().lower() == "triton":
+        resolved: Mode = "planned"
+    else:
+        resolved = "fixed"
+    logger.info("auto-mode resolved to %s (kernel_type=%s)", resolved, inferred)
+    return resolved
+
+
 def run_pipeline(ctx: PipelineContext, mode: Mode):
     """Drive one full optimization pipeline and return the final report.
 
-    This is the canonical entry point.  For the moment it still delegates
-    to the legacy helpers (``run_orchestrator`` for heterogeneous,
-    ``run_homogeneous_agent`` for homogeneous) but first:
-      - composes the task body once (homogeneous path),
-      - resolves tools once,
-      - logs a unified banner for observability.
+    This is the canonical entry point.  It resolves ``auto`` to a concrete
+    mode, resolves tools once, composes the task body once (for ``fixed``),
+    and dispatches.  For the moment it still delegates to the legacy
+    helpers (``run_orchestrator`` for ``planned``, ``run_homogeneous_agent``
+    for ``fixed``) but through the unified shape.
     """
     logger.info(
         "run_pipeline: mode=%s kernel_language=%s output_dir=%s max_rounds=%s rag_enabled=%s",
@@ -114,17 +146,20 @@ def run_pipeline(ctx: PipelineContext, mode: Mode):
         ctx.rag_enabled,
     )
 
-    # Tool resolution happens once regardless of mode.  Heterogeneous mode
-    # currently builds its own ToolRuntime inside
-    # `agents/heterogeneous/orchestrator.py` — we do not override it here
-    # yet to avoid behavior drift; the single-site guarantee becomes
-    # enforced once `run/pool_runner.py` lands.
+    if mode == "auto":
+        mode = _resolve_auto_mode(ctx)
+
+    # Tool resolution happens once regardless of mode.  Planned mode still
+    # builds its own ToolRuntime inside
+    # ``agents/heterogeneous/orchestrator.py`` — we do not override it
+    # here yet to avoid behavior drift; the single-site guarantee becomes
+    # enforced once ``run/pool_runner.py`` lands.
     _ = _resolve_tools(ctx, mode)
 
-    if mode == "heterogeneous":
-        return _run_heterogeneous(ctx)
-    if mode == "homogeneous":
-        return _run_homogeneous(ctx)
+    if mode == "planned":
+        return _run_planned(ctx)
+    if mode == "fixed":
+        return _run_fixed(ctx)
     if mode == "translate":
         # Hook for the upcoming TranslationLoop.  Until PR-60 lands we
         # surface a clear error rather than silently falling back.
@@ -134,17 +169,27 @@ def run_pipeline(ctx: PipelineContext, mode: Mode):
     raise ValueError(f"Unknown pipeline mode: {mode!r}")
 
 
-def _run_heterogeneous(ctx: PipelineContext):
-    """Dispatch into the existing heterogeneous path.
+def _run_planned(ctx: PipelineContext):
+    """Dispatch into the planner-driven parallel path.
 
-    The heterogeneous planner (``task_generator``) composes its own
-    per-task bodies, so we only massage the top-level preprocess context
-    (constraint / directive addenda, rag flag) before delegating.
+    The planner (``task_generator``) composes its own per-task bodies, so
+    here we only massage the top-level preprocess context (commandment
+    presence check, constraint / directive addenda, rag flag) before
+    delegating.
     """
     from minisweagent.run.orchestrator import run_orchestrator
 
     pctx = dict(ctx.preprocess_ctx)
-    pctx["user_instructions"] = ctx.user_prompt
+    commandment = pctx.get("commandment")
+    if not commandment:
+        # Planned mode requires the commandment because the planner LLM
+        # references it per sub-task.  Fixed mode skips this check.
+        raise RuntimeError(
+            "planned mode requires ``commandment`` in preprocess_ctx; "
+            "check preprocessor logs for failures."
+        )
+
+    pctx.setdefault("user_instructions", ctx.user_prompt)
     pctx["rag_enabled"] = ctx.rag_enabled
     pctx["output_dir"] = str(ctx.output_dir) if ctx.output_dir else pctx.get("output_dir")
 
@@ -154,9 +199,18 @@ def _run_heterogeneous(ctx: PipelineContext):
     if ctx.extra_addenda:
         addendum = "\n\n".join(a.strip() for a in ctx.extra_addenda if a and a.strip())
         if addendum:
-            base = pctx.get("commandment") or ""
-            pctx["commandment"] = (base + "\n\n" + addendum).strip()
+            pctx["commandment"] = (commandment + "\n\n" + addendum).strip()
+            if ctx.output_dir is not None:
+                try:
+                    _cm_path = Path(ctx.output_dir) / "COMMANDMENT.md"
+                    _cm_path.write_text(pctx["commandment"], encoding="utf-8")
+                    logger.info("Enriched commandment written to %s", _cm_path)
+                except Exception as exc:
+                    logger.warning("Failed to persist enriched commandment: %s", exc)
 
+    # run_orchestrator still takes the legacy ``heterogeneous=True`` kwarg
+    # until its internals are renamed in the orchestration PR.  The public
+    # API surface here uses the new mode vocabulary.
     return run_orchestrator(
         preprocess_ctx=pctx,
         gpu_ids=ctx.gpu_ids,
@@ -168,14 +222,14 @@ def _run_heterogeneous(ctx: PipelineContext):
     )
 
 
-def _run_homogeneous(ctx: PipelineContext):
-    """Dispatch into the existing homogeneous path after composing the body."""
+def _run_fixed(ctx: PipelineContext):
+    """Dispatch into the identical-copies parallel path after composing the body."""
     from minisweagent.agents.homogeneous.homogeneous_agent import run_homogeneous_agent
 
     body = compose_task_body(
         ComposeInputs(
             user_prompt=ctx.user_prompt,
-            mode="homogeneous",
+            mode="fixed",
             preprocess_ctx=ctx.preprocess_ctx,
             kernel_language=ctx.kernel_language,
             extra_addenda=ctx.extra_addenda,

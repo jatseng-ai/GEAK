@@ -1,4 +1,4 @@
-"""Parallel execution helpers -- thread-local logging, heterogeneous and GPU-pool runners.
+"""Parallel execution helpers -- thread-local logging and the GPU-pool runner.
 
 Extracted from ParallelAgent to keep the agent class focused on orchestration
 while execution details live here.
@@ -315,8 +315,8 @@ def run_pool(
 
     This is the single scheduler for every execution mode; callers build
     an ``AgentTask`` list (via ``pool_runner.build_homogeneous_tasks`` for
-    identical copies or via the heterogeneous planner for per-task
-    bodies) and hand it here.
+    fixed-mode identical copies or via the planner for planned-mode
+    per-task bodies) and hand it here.
 
     Args:
         tasks: List of AgentTask objects (from agent_spec.py), sorted by priority.

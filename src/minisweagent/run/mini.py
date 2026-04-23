@@ -292,7 +292,7 @@ def main(
         logger.info("User task input (%d chars): %s", len(task_content), task_content[:500])
 
     # 2a) LLM-driven pipeline param extraction
-    heterogeneous = None
+    mode: str | None = None
     max_rounds = None
     if task_content:
         from minisweagent.run.utils.task_parser import parse_pipeline_params
@@ -301,10 +301,16 @@ def main(
         pipeline_params = parse_pipeline_params(task_content, model)
         logger.debug("pipeline_params: %s", pipeline_params)
 
-        # Apply non-None extracted values (CLI flags still take priority)
-        if pipeline_params.get("heterogeneous") is not None and heterogeneous is None:
-            heterogeneous = pipeline_params["heterogeneous"]
-            logger.info("Using heterogeneous mode.")
+        # Apply non-None extracted values (CLI flags still take priority).
+        # The LLM extractor emits ``mode`` directly; for backward
+        # compatibility with older prompts it may also emit
+        # ``heterogeneous: bool`` which we translate.
+        extracted_mode = pipeline_params.get("mode")
+        if extracted_mode is None and pipeline_params.get("heterogeneous") is not None:
+            extracted_mode = "planned" if pipeline_params["heterogeneous"] else "fixed"
+        if extracted_mode is not None and mode is None:
+            mode = str(extracted_mode).strip().lower()
+            logger.info("Using mode=%s from task content.", mode)
         if pipeline_params.get("max_rounds") is not None:
             max_rounds = pipeline_params["max_rounds"]
             logger.info("Using max rounds: %s.", max_rounds)
@@ -489,70 +495,68 @@ def main(
     if preprocess_ctx.get("repo_root") and repo is None:
         repo = Path(preprocess_ctx["repo_root"])
 
-    # kernel_type routing:
-    # - hip/other -> homogeneous agent
-    # - triton -> heterogeneous orchestrator
-    # Auto-detect kernel type if heterogeneous flag was not set by LLM extraction or task parser
-    if heterogeneous is None:
+    # Mode resolution:
+    #   - If the LLM / CLI did not specify a mode, default to ``auto``.
+    #   - ``auto`` is resolved inside run_pipeline by ``_resolve_auto_mode``
+    #     (Triton → planned, everything else → fixed).  We still set the
+    #     discovery hint here so that resolution has the kernel type to
+    #     dispatch on even when preprocessor discovery is partial.
+    if mode is None:
+        mode = "auto"
+        logger.info("mode not specified; defaulting to auto (resolved inside run_pipeline).")
+
+    # Backfill discovery.kernel.type for run_pipeline's auto-resolver when
+    # preprocessor left it blank — saves an extra file probe in the hot path.
+    if mode == "auto":
         _discovery = preprocess_ctx.get("discovery") or {}
         _kernel_info = _discovery.get("kernel") or {}
-        _auto_kernel_type = _kernel_info.get("type")
-
-        if (not _auto_kernel_type or _auto_kernel_type == "unknown") and preprocess_ctx.get("kernel_path"):
+        if (not _kernel_info.get("type") or _kernel_info.get("type") == "unknown") and preprocess_ctx.get("kernel_path"):
             from minisweagent.agents.heterogeneous.task_generator import _infer_kernel_type
-            _auto_kernel_type = _infer_kernel_type(Path(preprocess_ctx["kernel_path"]))
 
-        if _auto_kernel_type == "triton":
-            heterogeneous = True
-            logger.info("Using heterogeneous mode based on discovery.")
-        else:
-            heterogeneous = False
-            logger.info("Using homogeneous mode based on discovery.")
+            inferred = _infer_kernel_type(Path(preprocess_ctx["kernel_path"]))
+            if inferred and inferred != "unknown":
+                _kernel_info = dict(_kernel_info)
+                _kernel_info["type"] = inferred
+                _discovery = dict(_discovery)
+                _discovery["kernel"] = _kernel_info
+                preprocess_ctx = dict(preprocess_ctx)
+                preprocess_ctx["discovery"] = _discovery
+                logger.info("auto-mode kernel_type backfilled from kernel path: %s", inferred)
 
-    # Unified dispatch: every mode flows through run_pipeline(ctx, mode).
-    mode: str = "heterogeneous" if heterogeneous else "homogeneous"
+    # Extract user constraints + directives regardless of mode; they are
+    # useful context for both fixed (prepended to task body) and planned
+    # (folded into the commandment so every sub-task sees them) paths.
+    # The commandment-presence check lives inside run_pipeline's
+    # ``_run_planned`` because fixed-mode runs do not need a commandment.
+    preprocess_ctx["user_instructions"] = task_content
+    preprocess_ctx["rag_enabled"] = rag_enabled
 
     extra_addenda: list[str] = []
-    if mode == "heterogeneous":
-        commandment = preprocess_ctx.get("commandment")
-        if not commandment:
-            error_message = "No commandment found in preprocessor context. Check preprocessor logs for failures."
-            logger.error(error_message)
-            raise RuntimeError(error_message)
-
-        preprocess_ctx["user_instructions"] = task_content
-
-        extracted = extract_user_constraints(task_content, model)
-        if extracted["constraints"]:
-            block = ["## USER-SPECIFIED CONSTRAINTS\n\nThese are mandatory. Violation means rejection.\n"]
-            block.extend(f"- {c}" for c in extracted["constraints"])
-            extra_addenda.append("\n".join(block))
-        if extracted["directives"]:
-            block = [
-                "## PRESCRIBED OPTIMIZATION DIRECTIVES\n\n"
-                "These are the user's prescribed optimization strategies. Prioritize them, but\n"
-                "also explore additional directions beyond these.\n"
-                "NOTE: Any performance numbers in the original user request come from full-model\n"
-                "profiling under different conditions. Use ONLY the GEAK-measured baseline metrics\n"
-                "for before/after speedup comparisons.\n"
-            ]
-            block.extend(f"- {d}" for d in extracted["directives"])
-            extra_addenda.append("\n".join(block))
-        if extra_addenda:
-            preprocess_ctx["commandment"] = commandment + "\n\n" + "\n\n".join(extra_addenda)
-            _commandment_path = preprocess_output_dir / "COMMANDMENT.md"
-            _commandment_path.write_text(preprocess_ctx["commandment"], encoding="utf-8")
-            logger.info(
-                "Enriched commandment with %d constraints and %d directives (written to %s).",
-                len(extracted["constraints"]),
-                len(extracted["directives"]),
-                _commandment_path,
-            )
-        preprocess_ctx["rag_enabled"] = rag_enabled
+    extracted = extract_user_constraints(task_content, model)
+    if extracted["constraints"]:
+        block = ["## USER-SPECIFIED CONSTRAINTS\n\nThese are mandatory. Violation means rejection.\n"]
+        block.extend(f"- {c}" for c in extracted["constraints"])
+        extra_addenda.append("\n".join(block))
+    if extracted["directives"]:
+        block = [
+            "## PRESCRIBED OPTIMIZATION DIRECTIVES\n\n"
+            "These are the user's prescribed optimization strategies. Prioritize them, but\n"
+            "also explore additional directions beyond these.\n"
+            "NOTE: Any performance numbers in the original user request come from full-model\n"
+            "profiling under different conditions. Use ONLY the GEAK-measured baseline metrics\n"
+            "for before/after speedup comparisons.\n"
+        ]
+        block.extend(f"- {d}" for d in extracted["directives"])
+        extra_addenda.append("\n".join(block))
+    if extra_addenda:
+        logger.info(
+            "Extracted %d constraint(s) and %d directive(s) from task content.",
+            len(extracted["constraints"]),
+            len(extracted["directives"]),
+        )
 
     metric = parsed_config.get("metric") or config.get("patch", {}).get("metric")
-    if mode == "homogeneous":
-        logger.info("Using metric: %s", metric)
+    logger.info("Using metric: %s", metric)
 
     repo_path = repo or config.get("patch", {}).get("repo")
     if repo_path:
@@ -583,16 +587,26 @@ def main(
         test_command=test_command or config.get("patch", {}).get("test_command"),
         metric=metric,
         rag_enabled=rag_enabled,
-        extra_addenda=[],  # already folded into commandment for hetero; homo receives user prompt directly
+        extra_addenda=extra_addenda,
         num_parallel=num_parallel,
         model_name=model_name,
         console=console,
     )
 
+    # ``run_pipeline`` resolves ``auto`` -> ``fixed``/``planned`` internally.
+    # Planned mode returns a FinalReport that we convert to BestPatchResult
+    # for the CLI's existing return contract; fixed mode already returns
+    # BestPatchResult.
     result_or_report = run_pipeline(ctx, mode=mode)  # type: ignore[arg-type]
     logger.info("Run completed in %.0fs.", time.monotonic() - _run_t0)
 
-    if mode == "heterogeneous":
+    # Distinguish by return shape instead of the legacy ``heterogeneous``
+    # flag: FinalReport comes from the planned path.
+    from minisweagent.run.pipeline_types import FinalReport
+
+    if isinstance(result_or_report, FinalReport) or (
+        isinstance(result_or_report, dict) and "status" in result_or_report
+    ):
         return _final_report_to_bestpatchresult(result_or_report)
     return result_or_report
 

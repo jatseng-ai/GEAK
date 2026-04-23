@@ -236,7 +236,7 @@ class TestRunHomogeneousAgent:
 
             # Verify ParallelAgent was called
             mock_parallel.assert_called_once()
-            # GEAK homogeneous mode always uses OptimizationAgent.
+            # GEAK fixed mode always uses OptimizationAgent.
             call_kwargs = mock_parallel.call_args[1]
             from minisweagent.agents.optimization_agent import OptimizationAgent
 
