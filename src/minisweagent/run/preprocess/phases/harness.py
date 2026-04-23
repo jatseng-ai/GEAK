@@ -904,31 +904,38 @@ def _extract_user_test_files(ctx: PhaseContext) -> list[Path]:
 
 
 def _read_codebase_context(ctx: PhaseContext) -> str:
-    """Return the codebase-context markdown PLUS auto-discovered repo files
-    that materially shape the harness contract.
+    """Return the codebase-context markdown PLUS a content-agnostic repo recon.
 
-    HarnessBuilder is a one-shot LLM transform — it has no tools to go
-    explore the repo on its own.  But the user's test command often
-    references files that HarnessBuilder MUST inspect to produce a
-    correct universal-contract harness:
+    HarnessBuilder is a one-shot LLM transform with no tools to go
+    explore the repo on its own.  The recon below is **deliberately
+    content-agnostic** — no hardcoded filename globs (Makefile,
+    scripts/task_runner.py, eval_tools/, etc.) — so it works for any
+    language convention (HIP, Triton, FlyDSL, CMake, Bazel, ninja,
+    custom shell, future additions).
 
-      - ``scripts/task_runner.py`` — exposes the {compile, correctness,
-        performance} modes used by the AgentKernelArena HIP convention
-      - ``Makefile`` / ``CMakeLists.txt`` — build steps for HIP / CUDA
-      - ``config.yaml`` — task metadata (target_kernel_functions,
-        compile_command, correctness_command, performance_command)
-      - ``eval_tools/`` — alternative HIP eval scripts used by
-        ``hip2hip/gpumode/`` style tasks
-      - ``*_wrapper.py`` — pybind11 / torch.utils.cpp_extension wrappers
-        that expose the HIP kernel to Python
+    Two layers:
 
-    We auto-glob these files from ``ctx.repo_root`` and append them as
-    structured sections to the discovery_context blob so HarnessBuilder
-    sees the SAME files an experienced engineer would inspect when
-    writing a harness manually.
+      1. **Repo tree listing** — ``find`` style listing capped at
+         depth 3 with file sizes.  Lets the LLM SEE the structure of
+         the repo and reason about which files matter for harness
+         construction.  Generic across languages.
 
-    File-content size cap per file (8 KB) keeps the prompt tractable.
-    Missing files are silently skipped.
+      2. **Small-file auto-inclusion** — every file under the repo
+         root with size <= ``_AUTOINCLUDE_FILE_BYTES`` (default 4 KB)
+         is included verbatim, EXCEPT obvious noise (binaries,
+         caches, .git, vendor dirs).  Small-file size is the filter,
+         NOT filename — Makefile, config.yaml, BUILD.bazel,
+         CMakeLists.txt, README, scripts/*.sh, scripts/*.py — all get
+         picked up by virtue of being small.
+
+    Larger files (>4 KB) are listed with their size in the tree so
+    the LLM knows they exist; if HarnessBuilder needs their content
+    the next prompt iteration can request it explicitly (handled by
+    HarnessBuilder's retry-with-feedback loop).
+
+    The result is generic, scales to new languages without code
+    changes, and gives the LLM the same evidence an engineer would
+    have when first inspecting the repo.
     """
     parts: list[str] = []
     if ctx.codebase_context_path:
@@ -941,64 +948,158 @@ def _read_codebase_context(ctx: PhaseContext) -> str:
     if repo_root is None or not repo_root.is_dir():
         return "\n\n".join(p for p in parts if p)
 
-    # Curated reconnaissance: file globs that materially shape the
-    # harness contract.  Order matters: we want the agent to see
-    # build files first, then test runners, then language wrappers.
-    _RECON_GLOBS: tuple[tuple[str, str], ...] = (
-        ("Makefile",                  "Makefile"),
-        ("CMakeLists.txt",            "CMakeLists.txt"),
-        ("Makefile.am",               "Makefile.am"),
-        ("config.yaml",               "config.yaml"),
-        ("config.yml",                "config.yml"),
-        ("scripts/task_runner.py",    "scripts/task_runner.py (test runner)"),
-        ("task_runner.py",            "task_runner.py (top-level test runner)"),
-        ("eval_tools/compile.py",     "eval_tools/compile.py"),
-        ("eval_tools/correctness_check.py", "eval_tools/correctness_check.py"),
-        ("eval_tools/cal_kernel_perf.py",   "eval_tools/cal_kernel_perf.py"),
-        ("kernel_loader.py",          "kernel_loader.py (HIP/CUDA pybind11 entry)"),
-    )
-    _PER_FILE_CAP = 8000
+    tree_block = _render_repo_tree(repo_root)
+    if tree_block:
+        parts.append(tree_block)
 
-    seen: set[str] = set()
-    for relpath, label in _RECON_GLOBS:
-        candidate = repo_root / relpath
-        if not candidate.is_file():
-            continue
-        key = str(candidate.resolve())
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            content = candidate.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        if len(content) > _PER_FILE_CAP:
-            content = content[:_PER_FILE_CAP] + f"\n\n# [truncated; full size {len(content)} bytes]"
-        parts.append(
-            f"\n## REPO RECON: {label}\n\n"
-            f"`{candidate}`:\n\n"
-            f"```\n{content.rstrip()}\n```"
-        )
-
-    # Wrapper files are kernel-name-derived; glob them.
-    for wrapper in sorted(repo_root.glob("*_wrapper.py")):
-        key = str(wrapper.resolve())
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            content = wrapper.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        if len(content) > _PER_FILE_CAP:
-            content = content[:_PER_FILE_CAP] + f"\n\n# [truncated; full size {len(content)} bytes]"
-        parts.append(
-            f"\n## REPO RECON: {wrapper.name} (Python wrapper for HIP/CUDA kernel)\n\n"
-            f"`{wrapper}`:\n\n"
-            f"```python\n{content.rstrip()}\n```"
-        )
+    files_block = _render_autoinclude_files(repo_root)
+    if files_block:
+        parts.append(files_block)
 
     return "\n\n".join(p for p in parts if p)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Repo recon helpers — content-agnostic + size-bounded
+# ──────────────────────────────────────────────────────────────────────
+
+
+_TREE_MAX_DEPTH = 3
+_TREE_MAX_ENTRIES = 200       # total entries shown in the tree listing
+_AUTOINCLUDE_FILE_BYTES = 4096   # files <= this size get included verbatim
+_AUTOINCLUDE_TOTAL_BYTES = 32768  # total auto-included bytes per repo (cap)
+_NOISE_DIRS = frozenset({
+    ".git", ".github", ".cache", "__pycache__", ".pytest_cache",
+    ".mypy_cache", ".ruff_cache", ".venv", "venv", "node_modules",
+    "build", ".next", "dist", "target", "third_party", "vendor",
+    "tools_runtime",  # GEAK-internal tooling, never relevant to harnessing
+})
+_NOISE_SUFFIXES = frozenset({
+    ".pyc", ".pyo", ".so", ".o", ".a", ".lib", ".dll", ".dylib",
+    ".exe", ".bin", ".out", ".class", ".jar", ".tar", ".tgz",
+    ".zip", ".gz", ".bz2", ".xz", ".7z", ".pkl", ".npy", ".pt",
+    ".pth", ".onnx", ".bin", ".lock",
+})
+
+
+def _is_noise(path: Path) -> bool:
+    """Return True if ``path`` is something the LLM shouldn't see (binaries, caches)."""
+    if path.suffix.lower() in _NOISE_SUFFIXES:
+        return True
+    for part in path.parts:
+        if part in _NOISE_DIRS:
+            return True
+    return False
+
+
+def _render_repo_tree(repo_root: Path) -> str:
+    """Render a depth-bounded tree of ``repo_root`` with file sizes.
+
+    Generic ``find -maxdepth N``-style listing: shows directory layout
+    + file sizes so the LLM can identify build files, test runners,
+    config files, wrappers, etc., regardless of naming convention.
+    Skips noise (binaries, caches, .git).
+    """
+    entries: list[tuple[Path, int]] = []
+    for path in sorted(repo_root.rglob("*")):
+        # Depth check (relative to repo_root)
+        try:
+            rel = path.relative_to(repo_root)
+        except ValueError:
+            continue
+        if len(rel.parts) > _TREE_MAX_DEPTH:
+            continue
+        if _is_noise(path):
+            continue
+        try:
+            size = path.stat().st_size if path.is_file() else 0
+        except OSError:
+            continue
+        entries.append((rel, size))
+        if len(entries) >= _TREE_MAX_ENTRIES:
+            break
+
+    if not entries:
+        return ""
+
+    lines = [
+        "## REPO RECON: directory tree",
+        f"`{repo_root}` (depth ≤ {_TREE_MAX_DEPTH}, "
+        f"showing up to {_TREE_MAX_ENTRIES} entries; binaries/caches filtered):",
+        "```",
+    ]
+    for rel, size in entries:
+        marker = "/" if not size else f"  ({size} B)"
+        lines.append(f"{rel}{marker}")
+    lines.append("```")
+    return "\n".join(lines)
+
+
+def _render_autoinclude_files(repo_root: Path) -> str:
+    """Auto-include small files (≤ ``_AUTOINCLUDE_FILE_BYTES``) verbatim.
+
+    Generic across languages: any small text file (Makefile, config.yaml,
+    scripts/*.sh, BUILD.bazel, README.md, …) gets included by virtue of
+    being small — no filename pattern matching.
+    """
+    chunks: list[str] = []
+    total_bytes = 0
+    seen: set[str] = set()
+
+    for path in sorted(repo_root.rglob("*")):
+        if not path.is_file() or _is_noise(path):
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size == 0 or size > _AUTOINCLUDE_FILE_BYTES:
+            continue
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if not _looks_textual(content):
+            continue
+
+        rel = path.relative_to(repo_root)
+        chunk = (
+            f"\n### `{rel}`  ({size} B)\n\n"
+            f"```\n{content.rstrip()}\n```"
+        )
+        if total_bytes + len(chunk) > _AUTOINCLUDE_TOTAL_BYTES:
+            break
+        chunks.append(chunk)
+        total_bytes += len(chunk)
+
+    if not chunks:
+        return ""
+
+    header = (
+        f"## REPO RECON: auto-included small files "
+        f"(≤ {_AUTOINCLUDE_FILE_BYTES} B each, total cap {_AUTOINCLUDE_TOTAL_BYTES} B)\n"
+    )
+    return header + "\n".join(chunks)
+
+
+def _looks_textual(text: str) -> bool:
+    """Heuristic: skip binaries that slipped through the suffix filter."""
+    if not text:
+        return False
+    # Files with > 1% null bytes or > 30% control chars are binary
+    sample = text[:2048]
+    nulls = sample.count("\x00")
+    if nulls / max(len(sample), 1) > 0.01:
+        return False
+    ctrl = sum(1 for c in sample if ord(c) < 32 and c not in "\n\r\t")
+    if ctrl / max(len(sample), 1) > 0.30:
+        return False
+    return True
 
 
 # ──────────────────────────────────────────────────────────────────────
