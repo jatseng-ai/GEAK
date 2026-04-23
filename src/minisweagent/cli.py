@@ -492,6 +492,7 @@ def main(
         gpu_id=parsed_gpu_ids[0] if parsed_gpu_ids else 0,
         model_factory=lambda: get_model(model_name, config.get("model", {})),
         console=console,
+        target_language=target_language,
     )
     logger.debug("Preprocess kwargs: %s", _preprocess_kwargs)
 
@@ -526,40 +527,28 @@ def main(
     if preprocess_ctx.get("repo_root") and repo is None:
         repo = Path(preprocess_ctx["repo_root"])
 
-    # Translation-phase gate:
+    # Translation-phase notification:
     #
-    # Translation is NOT a ``run_pipeline`` mode.  When the user
-    # specified a ``target_language`` different from the detected source
-    # language, the plan calls for a conditional preprocess phase
-    # (preprocess/phases/translation.py) that runs a standalone
-    # ``TranslationAgent`` (SubagentBase subclass, NOT OptimizationAgent)
-    # with a verify-retry loop against golden tensors captured from the
-    # source harness.  The phase then swaps ``ctx.kernel_path`` +
-    # ``ctx.language`` to the translated kernel, and normal
-    # Discovery/Harness/Baseline/Explore + run_pipeline proceed.
-    #
-    # The full phase is not yet implemented (it lands with the
-    # preprocessing refactor PR).  For now we surface a clear error with
-    # actionable pointers instead of silently ignoring the flag.
+    # When ``--target-language`` is set and differs from the detected
+    # source language, the preprocess ``TranslationPhase`` has already
+    # run BEFORE we got here (it's the first phase in
+    # PreprocessOrchestrator) and swapped ``preprocess_ctx["kernel_path"]``
+    # to the translated kernel.  We log a confirmation here.  See
+    # ``run/preprocess/phases/translation.py``.
     _detected_source = _normalize_kernel_type(
         (preprocess_ctx.get("discovery") or {}).get("kernel", {}).get("type")
         or preprocess_ctx.get("kernel_type")
     )
     if target_language and target_language != _detected_source and target_language != "other":
-        raise NotImplementedError(
-            f"Translation requested (source={_detected_source!r} → target={target_language!r}) "
-            f"but the preprocess translation phase is not implemented yet.\n\n"
-            f"The architectural skeleton is in place:\n"
-            f"  - ``TranslationAgent`` (standalone SubagentBase; NOT derived from OptimizationAgent) "
-            f"lives at src/minisweagent/subagents/translation/translator.py\n"
-            f"  - The phase will live at src/minisweagent/preprocess/phases/translation.py\n\n"
-            f"Implementation is scheduled for the preprocessing refactor PR.  Until then, "
-            f"omit ``--target-language`` (or set it equal to the source) to optimize the kernel "
-            f"in-place."
-        )
-    if target_language and target_language == _detected_source:
         logger.info(
-            "target_language=%s matches detected source language; translation phase skipped (no-op).",
+            "Translation preprocess phase ran: source=%s -> target=%s (kernel now %s).",
+            _detected_source,
+            target_language,
+            preprocess_ctx.get("kernel_path"),
+        )
+    elif target_language:
+        logger.info(
+            "target_language=%s matches detected source language; translation skipped.",
             target_language,
         )
 

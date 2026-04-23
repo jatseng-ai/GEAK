@@ -64,15 +64,38 @@ class TestTranslationGate:
         TranslationPhase().run(ctx)
         assert any(name == "translation" for name, _reason in ctx.phases_skipped)
 
-    def test_raises_when_translation_actually_needed(self) -> None:
-        """Body is not implemented yet — should raise NotImplementedError
-        pointing at the TranslationAgent skeleton."""
+    def test_runs_translation_agent_when_translation_needed(self, tmp_path) -> None:
+        """TranslationPhase invokes the TranslationAgent verify-retry
+        loop when source != target.  We stub the LLM via ctx-level
+        injection to avoid calling a real model.
+        """
+        src = tmp_path / "kernel.py"
+        src.write_text("def add(a, b): return a + b\n")
+
         ctx = PhaseContext(
-            kernel_url="/tmp/kernel.py",  # inferred source=triton
+            kernel_url=str(src),
             target_language="hip",
         )
-        with pytest.raises(NotImplementedError, match="TranslationPhase"):
+
+        from unittest.mock import patch
+
+        # Patch the agent-builder to inject a mocked agent whose loop
+        # returns a successful TranslationResult.
+        from minisweagent.subagents.translation import TranslationAgent
+        from minisweagent.subagents.translation.translator import TranslationResult
+
+        fake_result = TranslationResult(
+            ok=True,
+            candidate_code="__global__ void add(...) { ... }",
+            attempts_used=1,
+        )
+
+        with patch.object(TranslationAgent, "loop", return_value=fake_result):
             TranslationPhase().run(ctx)
+
+        # Kernel path got swapped to the translated file (.hip suffix)
+        assert ctx.kernel_path.endswith(".hip")
+        assert "translation" in ctx.phases_run
 
 
 # ── PreprocessContext output shape ────────────────────────────────────

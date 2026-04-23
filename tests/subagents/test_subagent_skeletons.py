@@ -72,7 +72,11 @@ class TestSubagentContract:
 class TestSubagentNotImplementedMessages:
     """The skeleton bodies raise NotImplementedError with pointers to where
     the full implementation will live.  Downstream callers rely on these
-    messages being actionable."""
+    messages being actionable.
+
+    Note: TranslationAgent has a full implementation and is NOT listed
+    here — see ``test_translation_agent.py`` for its behavioural tests.
+    """
 
     def test_harness_builder_points_to_legacy(self) -> None:
         with pytest.raises(NotImplementedError) as e:
