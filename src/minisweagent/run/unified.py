@@ -47,6 +47,7 @@ class PipelineContext:
     model_factory: Callable[[], Any] | None = None
     config: dict[str, Any] = field(default_factory=dict)
     max_rounds: int | None = None
+    env: Any = None
     env_class: Any = None
     env_kwargs: dict[str, Any] = field(default_factory=dict)
     repo: Path | None = None
@@ -54,6 +55,9 @@ class PipelineContext:
     metric: str | None = None
     rag_enabled: bool = False
     extra_addenda: list[str] = field(default_factory=list)
+    num_parallel: int | None = None
+    model_name: str | None = None
+    console: Any = None
 
 
 # ── Tool resolution ───────────────────────────────────────────────────
@@ -187,16 +191,30 @@ def _run_homogeneous(ctx: PipelineContext):
     if ctx.output_dir is not None:
         agent_config["patch_output_dir"] = str(ctx.output_dir)
 
-    return run_homogeneous_agent(
+    kwargs: dict[str, Any] = dict(
         config=ctx.config,
         task_content=body,
         model=ctx.model,
-        env=None,  # legacy callers pass env but it is ignored in favor of env_class
+        env=ctx.env,
         env_class=ctx.env_class,
         env_kwargs=ctx.env_kwargs,
         agent_config=agent_config,
         repo=ctx.repo,
     )
+    if ctx.num_parallel is not None:
+        kwargs["num_parallel"] = ctx.num_parallel
+    if ctx.gpu_ids:
+        # run_homogeneous_agent takes a string and re-parses internally;
+        # re-serialize the canonical list[int] form.
+        kwargs["gpu_ids"] = ",".join(str(g) for g in ctx.gpu_ids)
+    if ctx.output_dir is not None:
+        kwargs["output_dir"] = ctx.output_dir
+    if ctx.model_name is not None:
+        kwargs["model_name"] = ctx.model_name
+    if ctx.console is not None:
+        kwargs["console"] = ctx.console
+
+    return run_homogeneous_agent(**kwargs)
 
 
 __all__ = ["PipelineContext", "run_pipeline"]
