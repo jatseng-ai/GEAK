@@ -1,26 +1,26 @@
 name: Benchmark
 
 on:
-  # Uncomment the schedule when GPU runner (geak-benchmark-5kh27) is available:
-  # schedule:
-  #   - cron: "0 5 1,15 * *"
+  issues:
+    types: [labeled]
   workflow_dispatch:
 
 jobs:
   benchmark:
-    name: Run AgentKernelArena benchmark
+    name: Run GEAK benchmark
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'run-benchmark')
     runs-on: geak-benchmark-5kh27
     timeout-minutes: 720
 
     env:
       AMD_LLM_API_KEY: ${{ secrets.AMD_LLM_API_KEY }}
+      MSWEA_CONFIGURED: "true"
 
     steps:
-      - name: Checkout GEAK_v3
+      - name: Checkout GEAK
         uses: actions/checkout@v5
-        with:
-          ref: dev
-          path: geak
 
       - name: Checkout AgentKernelArena
         uses: actions/checkout@v5
@@ -30,25 +30,24 @@ jobs:
           path: arena
 
       - name: Install GEAK
-        working-directory: geak
         run: pip install -e '.[full]'
 
       - name: Verify GEAK CLI
         run: geak --help
 
-      - name: Configure AgentKernelArena for geak_v3
-        working-directory: arena
+      - name: Check API key is set
         run: |
-          python3 -c "
-          import yaml, pathlib
-          cfg = yaml.safe_load(pathlib.Path('config.yaml').read_text())
-          cfg['agent']['template'] = 'geak_v3'
-          pathlib.Path('config.yaml').write_text(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
-          "
+          if [ -z "$AMD_LLM_API_KEY" ]; then
+            echo "::error::AMD_LLM_API_KEY is NOT set. Please add it as a repository secret."
+            exit 1
+          else
+            echo "AMD_LLM_API_KEY is set (length: ${#AMD_LLM_API_KEY})"
+          fi
 
       - name: Run benchmark
-        working-directory: arena
-        run: python3 main.py
+        run: bash ci_benchmark.sh
+        env:
+          ARENA_ROOT: arena
 
       - name: Collect results
         id: results
@@ -99,12 +98,19 @@ jobs:
           path: arena/benchmark-results.json
           retention-days: 90
 
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+
       - name: Download previous benchmark
         id: prev
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: benchmark.yaml
-          branch: dev
           name_is_regexp: true
           name: benchmark-.*
           path: previous-benchmarks
@@ -183,11 +189,11 @@ jobs:
               }
             }
 
-            const title = `Benchmark regression detected on \`dev\` — ${new Date().toISOString().slice(0, 10)}`;
+            const title = `Benchmark regression detected — ${new Date().toISOString().slice(0, 10)}`;
             const body = [
               '## Benchmark Regression Report',
               '',
-              `The biweekly benchmark detected a **${dropPct.toFixed(1)}%** drop in average speedup (${prevAvg.toFixed(2)}x → ${latestAvg.toFixed(2)}x), exceeding the ${THRESHOLD}% threshold.`,
+              `The benchmark detected a **${dropPct.toFixed(1)}%** drop in average speedup (${prevAvg.toFixed(2)}x → ${latestAvg.toFixed(2)}x), exceeding the ${THRESHOLD}% threshold.`,
               '',
               `**${regressions.length} task(s) regressed >10%:**`,
               '',
