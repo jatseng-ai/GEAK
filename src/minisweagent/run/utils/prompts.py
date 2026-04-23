@@ -16,8 +16,19 @@ Extract the following information (return null if not found):
 4. repo: The repository path mentioned in the task (absolute path or relative path)
 5. test_command: The command to run tests or benchmarks
 6. metric: The performance metric to measure (e.g., "bandwidth in GB/s", "latency in ms", "throughput")
-7. num_parallel: Number of parallel optimization agents to run (integer)
-8. gpu_ids: Comma-separated GPU IDs for parallel execution (e.g., "0,1,2,3")
+7. num_parallel: Number of parallel optimization agents to run (integer).
+   If the user did not explicitly state a number but specified a GPU list,
+   you MAY leave this null — the pipeline will auto-derive it as
+   ``len(gpu_ids)``.  Only set this when the user explicitly says
+   "N parallel" / "N workers" etc.
+8. gpu_ids: GPU IDs for parallel execution.  Accept any of these forms
+   verbatim from the user's prompt:
+     - "0,1,2,3"   (comma-separated list)
+     - "4-7"       (range, inclusive — e.g., "Use GPUs 4-7" → "4-7")
+     - "0,1,4-7"   (mixed)
+     - "4"         (single GPU)
+   Prefer the FORM the user used (don't expand "4-7" into "4,5,6,7"
+   unnecessarily — downstream parsing handles both).
 9. output_dir: Directory path where output logs and artifacts should be saved (e.g., "outputs/topk_run", "/workspace/results")
 10. model: Model name or identifier to use (e.g., "claude-sonnet-4-20250514", "gpt-4o")
 11. config: Path to a YAML configuration file (e.g., "configs/my_setup.yaml", "/path/to/config.yaml")
