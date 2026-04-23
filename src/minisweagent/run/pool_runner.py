@@ -1,0 +1,205 @@
+"""Single GPU-pool execution path for every pipeline mode.
+
+Before this module existed, three code paths forked to execute parallel work:
+
+  1. ``run_pool`` (``run/utils/parallel_helpers.py``) — the canonical pool
+     scheduler: M AgentTasks on N GPU slots, overflow queues, per-task
+     labels, worktree reset, WorkingMemory init, patch auto-extract.
+  2. ``run_parallel_heterogeneous`` (``run/utils/parallel_helpers.py``) —
+     legacy 1:1 AgentSpec runner used by the old orchestrator.
+  3. The inline ``else`` branch of ``ParallelAgent.run_parallel`` —
+     identical-copies homogeneous runner that duplicated (2) with a
+     different worktree naming scheme and no priority queue.
+
+All three do the same thing under the hood (worktree + env + agent.run +
+log file + trajectory save); the only real differences are task shape
+(``AgentTask`` vs ``AgentSpec`` vs implicit `num_parallel` count) and
+worktree naming.  This module provides a **single** entry point that
+accepts ``AgentTask`` lists and delegates to ``run_pool`` for everything
+else.  Callers that previously held an ``AgentSpec`` list or a bare
+``num_parallel`` count now produce ``AgentTask`` lists via
+``build_homogeneous_tasks`` / ``build_tasks_from_specs``.
+
+PipelineContext → (build tasks) → execute(ctx, tasks) → run_pool(...).
+
+No behavior change on its own: this commit only introduces the canonical
+shape so subsequent commits can rewire ``run/mini.py`` and collapse the
+inline homo branch.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Callable
+
+from minisweagent.agents.agent_spec import AgentTask
+from minisweagent.run.utils.parallel_helpers import (
+    redirect_output_to_file,
+    run_pool as _run_pool_impl,
+)
+from minisweagent.run.unified import PipelineContext
+
+logger = logging.getLogger(__name__)
+
+
+def build_homogeneous_tasks(
+    num_parallel: int,
+    agent_class: type,
+    task_body: str,
+    *,
+    base_label: str = "parallel",
+    priority: int = 10,
+    kernel_language: str = "python",
+    num_gpus_per_task: int = 1,
+) -> list[AgentTask]:
+    """Materialize ``num_parallel`` identical ``AgentTask`` objects.
+
+    Collapsing the inline-homo branch of ``ParallelAgent.run_parallel``
+    means ``run_pipeline(mode="homogeneous")`` will ask for a list of
+    identical tasks and hand them to the pool scheduler.  The scheduler
+    then treats these tasks exactly like heterogeneous planner-generated
+    tasks — same worktrees, same logs, same priority order, same GPU
+    acquire/release.
+
+    Labels follow the existing convention (``parallel_0``, ``parallel_1``,
+    ...) so patch directories written by the pool remain byte-compatible
+    with the legacy homo runner.
+    """
+    if num_parallel < 1:
+        raise ValueError(f"num_parallel must be >= 1, got {num_parallel}")
+
+    tasks: list[AgentTask] = []
+    for i in range(num_parallel):
+        tasks.append(
+            AgentTask(
+                agent_class=agent_class,
+                task=task_body,
+                label=f"{base_label}_{i}",
+                priority=priority,
+                kernel_language=kernel_language,
+                num_gpus=num_gpus_per_task,
+            )
+        )
+    logger.debug(
+        "build_homogeneous_tasks: produced %d tasks (label prefix=%s, agent=%s)",
+        num_parallel,
+        base_label,
+        agent_class.__name__,
+    )
+    return tasks
+
+
+def build_tasks_from_specs(
+    specs: list,
+    task_body: str,
+    *,
+    default_priority: int = 10,
+) -> list[AgentTask]:
+    """Convert a legacy ``list[AgentSpec]`` into an ``AgentTask`` list.
+
+    The pool scheduler expects ``AgentTask`` — which omits the
+    hard-pinned ``gpu_ids`` that ``AgentSpec`` carried.  Conversion keeps
+    ``num_gpus`` as the number of GPUs each spec originally requested so
+    multi-GPU tasks still get the right slot count.
+    """
+    out: list[AgentTask] = []
+    for idx, spec in enumerate(specs):
+        out.append(
+            AgentTask(
+                agent_class=spec.agent_class,
+                task=task_body,
+                label=(spec.label or f"spec_{idx}"),
+                priority=default_priority,
+                config=dict(spec.config or {}),
+                step_limit=getattr(spec, "step_limit", 0) or 0,
+                cost_limit=getattr(spec, "cost_limit", 0.0) or 0.0,
+                num_gpus=getattr(spec, "num_gpus", 1) or 1,
+            )
+        )
+    return out
+
+
+def execute(
+    ctx: PipelineContext,
+    tasks: list[AgentTask],
+    *,
+    agent_config: dict[str, Any] | None = None,
+    repo_path: Path | None = None,
+    base_patch_dir: Path | None = None,
+    is_git_repo: bool | None = None,
+    env_factory: Callable[[], Any] | None = None,
+    output: Path | None = None,
+    save_traj_fn: Callable | None = None,
+    console: Any = None,
+    redirect_output_fn: Callable = redirect_output_to_file,
+) -> list[tuple[int, Any, Any, Any]]:
+    """Run ``tasks`` through the shared pool scheduler.
+
+    All required context comes from ``ctx``; kwargs are narrow overrides
+    for pieces that today are not yet on ``PipelineContext`` (e.g. the
+    environment factory).  Later commits will move these onto the context
+    object so the signature becomes ``execute(ctx, tasks)``.
+    """
+    if not tasks:
+        logger.warning("execute: no tasks provided, nothing to run")
+        return []
+
+    resolved_repo = repo_path or ctx.repo
+    if resolved_repo is None:
+        raise ValueError("execute requires a repo path (pass repo_path= or set ctx.repo)")
+    resolved_repo = Path(resolved_repo).resolve()
+
+    if base_patch_dir is None:
+        if ctx.output_dir is None:
+            raise ValueError("execute requires base_patch_dir or ctx.output_dir")
+        base_patch_dir = Path(ctx.output_dir).resolve()
+
+    if is_git_repo is None:
+        is_git_repo = (resolved_repo / ".git").exists()
+
+    if env_factory is None:
+        raise ValueError("execute requires env_factory; PipelineContext does not yet carry one")
+
+    if ctx.model_factory is not None:
+        model_factory: Callable[[], Any] = ctx.model_factory
+    elif ctx.model is not None:
+        _model = ctx.model
+        model_factory = lambda: _model  # noqa: E731  — simple capture is the whole point
+    else:
+        raise ValueError("execute requires a model factory (ctx.model_factory or ctx.model)")
+
+    resolved_cfg = dict(agent_config or {})
+
+    base_task_content = tasks[0].task or ctx.user_prompt
+
+    logger.info(
+        "pool_runner.execute: %d tasks, %d GPUs, repo=%s, patch_dir=%s",
+        len(tasks),
+        len(ctx.gpu_ids),
+        resolved_repo,
+        base_patch_dir,
+    )
+
+    return _run_pool_impl(
+        tasks=tasks,
+        gpu_ids=list(ctx.gpu_ids),
+        repo_path=resolved_repo,
+        is_git_repo=is_git_repo,
+        base_task_content=base_task_content,
+        agent_config=resolved_cfg,
+        model_factory=model_factory,
+        env_factory=env_factory,
+        base_patch_dir=base_patch_dir,
+        output=output,
+        redirect_output_fn=redirect_output_fn,
+        save_traj_fn=save_traj_fn,
+        console=console,
+    )
+
+
+__all__ = [
+    "build_homogeneous_tasks",
+    "build_tasks_from_specs",
+    "execute",
+]
