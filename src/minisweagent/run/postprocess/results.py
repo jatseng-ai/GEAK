@@ -172,7 +172,7 @@ def rewrite_summary_with_verified_selection(
 def record_final_outcome(ctx: dict[str, Any], report: dict[str, Any]) -> None:
     """Record the final outcome using verified speedup when available."""
     try:
-        from minisweagent.memory.cross_session_memory import (  # pylint: disable=import-error,no-name-in-module
+        from minisweagent.memory.cross_session import (  # pylint: disable=import-error,no-name-in-module
             classify_kernel_category,
         )
         from minisweagent.memory.integration import (  # pylint: disable=import-error,no-name-in-module
@@ -534,7 +534,7 @@ def auto_finalize(
         return report
 
     try:
-        from minisweagent.memory.cross_session_memory import (  # pylint: disable=import-error,no-name-in-module
+        from minisweagent.memory.cross_session import (  # pylint: disable=import-error,no-name-in-module
             classify_kernel_category,
         )
         from minisweagent.memory.integration import (  # pylint: disable=import-error,no-name-in-module

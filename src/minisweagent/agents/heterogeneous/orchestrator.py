@@ -288,7 +288,7 @@ def run_heterogeneous_orchestrator(
         )
 
         if is_working_memory_enabled():
-            from minisweagent.memory.cross_session_memory import (  # pylint: disable=import-error,no-name-in-module
+            from minisweagent.memory.cross_session import (  # pylint: disable=import-error,no-name-in-module
                 classify_kernel_category,
             )
             from minisweagent.memory.working_memory import (  # pylint: disable=import-error,no-name-in-module
