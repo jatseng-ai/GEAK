@@ -5,26 +5,42 @@ Flow (per execution plan §0.5(b)):
   a. Infer source language from the kernel URL extension.
   b. If source == target, short-circuit as a no-op.
   c. Read the source kernel into memory.
-  d. Run the source kernel's harness (if one is supplied) to capture
-     golden tensors.  When no harness is supplied we still attempt
-     translation but verification is relaxed to "the candidate parses".
-  e. Invoke ``TranslationAgent.loop(max_attempts=3, verify_fn=...)``
-     — a standalone ``SubagentBase`` subclass that does NOT compose
-     ``OptimizationAgent``, just a direct model.query verify-retry
-     loop.
+  d. Invoke ``TranslationAgent.loop(max_attempts=3, verify_fn=...)`` —
+     a standalone ``SubagentBase`` subclass that does NOT compose
+     ``OptimizationAgent``.  Each attempt is a direct ``model.query``
+     call.
+  e. Run ``validate_translation_performance`` (0.5× fail / 0.8× warn
+     per language pair, adapted from PR #153) when both source and
+     target latencies are available.
   f. Persist the translated file next to the source, swap
      ``ctx.kernel_path`` + ``ctx.kernel_url`` to it, and continue.
   g. If ``ctx.translate_only=True``, the orchestrator returns early
      after this phase completes.
 
-Validation thresholds (``validate_translation_performance``): adapted
-from PR #153 — 0.5× fail / 0.8× warn per language pair — but only
-applied when a baseline harness run exists to compare latencies.
+Verifier policy
+---------------
+
+``_build_verify_fn`` layers checks in priority order:
+
+  1. Source kernel's entry-point name(s) must be preserved — the
+     user's test harness imports the translated kernel by name, so a
+     translation that renames the public function is broken by
+     construction.
+  2. Candidate must be non-empty and parse as code for the target
+     language (target-language token presence — Triton uses ``tl.``,
+     HIP uses ``__global__``, CUDA uses ``__global__``).
+  3. When a ``harness_path`` is supplied to ``loop()`` via inputs,
+     full tensor-level verification via tensor allclose is performed
+     by running the harness against the candidate.  (This tier is
+     implemented progressively; today it's a TODO hook consumed by
+     callers who supply their own ``verify_fn``.)
 """
 
 from __future__ import annotations
 
 import logging
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -52,14 +68,140 @@ def _canonicalize_language(name: str | None) -> str | None:
     return {"rocm": "hip"}.get(n, n)
 
 
-def _always_true_verifier(_candidate: str) -> bool:
-    """Fallback verifier when no harness is supplied.
+@dataclass
+class PerformanceReport:
+    """Result of comparing source vs target kernel latencies after translation.
 
-    Relies on the attempt succeeding at all (model returned
-    something).  A richer verifier runs the candidate through the
-    source harness and compares tensors; that's the common case and
-    is set up by ``TranslationPhase._build_verify_fn`` when a harness
-    is available.
+    Per plan §13.2-E row 30 and the PR #153 thresholds used by the
+    original FlyDSL translation pipeline.
+
+    Attributes:
+        status: one of ``"ok"``, ``"warn"``, ``"fail"``.
+        ratio: target_latency / source_latency.  A ratio > 1 means
+          the translated kernel is SLOWER than the source.
+        source_latency_ms: latency of the source kernel in ms.
+        target_latency_ms: latency of the translated kernel in ms.
+        message: human-readable summary.
+    """
+
+    status: str
+    ratio: float
+    source_latency_ms: float
+    target_latency_ms: float
+    message: str
+
+
+def validate_translation_performance(
+    source_latency_ms: float,
+    target_latency_ms: float,
+    *,
+    fail_threshold: float = 0.5,
+    warn_threshold: float = 0.8,
+) -> PerformanceReport:
+    """Compare source vs target kernel latency post-translation.
+
+    Thresholds adapted from PR #153's PyTorch→FlyDSL validation:
+
+      - **fail**: ``target_latency < fail_threshold * source_latency``
+        or ``target_latency > (1 / fail_threshold) * source_latency``.
+        The translated kernel is either wildly faster (suspicious —
+        suggests a correctness bug masked as a speedup) or >2× slower.
+      - **warn**: ``target_latency > (1 / warn_threshold) * source_latency``
+        (i.e. target is 1.25× slower or worse).  Translation succeeded
+        but the target has a real performance regression relative to
+        source.
+      - **ok**: target within ``[fail_threshold, 1/warn_threshold]``
+        multiples of source.
+    """
+    if source_latency_ms <= 0:
+        raise ValueError(
+            f"source_latency_ms must be > 0; got {source_latency_ms}"
+        )
+    if target_latency_ms <= 0:
+        raise ValueError(
+            f"target_latency_ms must be > 0; got {target_latency_ms}"
+        )
+    if not 0 < fail_threshold < warn_threshold < 1:
+        raise ValueError(
+            f"thresholds must satisfy 0 < fail_threshold ({fail_threshold}) < "
+            f"warn_threshold ({warn_threshold}) < 1"
+        )
+
+    ratio = target_latency_ms / source_latency_ms
+
+    # Two fail cases: too-fast (suggests correctness bug masked as speedup)
+    # and too-slow (>2× regression).
+    too_fast = ratio < fail_threshold
+    too_slow = ratio > (1.0 / fail_threshold)
+    if too_fast or too_slow:
+        reason = (
+            f"suspicious speedup ({ratio:.2f}x — possible correctness bug)"
+            if too_fast
+            else f"severe regression ({ratio:.2f}x slower than source)"
+        )
+        return PerformanceReport(
+            status="fail",
+            ratio=ratio,
+            source_latency_ms=source_latency_ms,
+            target_latency_ms=target_latency_ms,
+            message=reason,
+        )
+
+    # Warn: target is more than 1/warn_threshold× slower (e.g. 1.25×).
+    if ratio > (1.0 / warn_threshold):
+        return PerformanceReport(
+            status="warn",
+            ratio=ratio,
+            source_latency_ms=source_latency_ms,
+            target_latency_ms=target_latency_ms,
+            message=f"performance regression ({ratio:.2f}x slower than source)",
+        )
+
+    return PerformanceReport(
+        status="ok",
+        ratio=ratio,
+        source_latency_ms=source_latency_ms,
+        target_latency_ms=target_latency_ms,
+        message=f"within threshold ({ratio:.2f}x source latency)",
+    )
+
+
+# ─── Verification helpers ───────────────────────────────────────────
+
+
+def _extract_python_entry_points(source: str) -> set[str]:
+    """Return the set of top-level ``def <name>`` function names in Python source.
+
+    Used to require that the translated candidate preserve the user-
+    facing entry-point names from the Triton / Python source.  We
+    scan only top-level definitions (no leading whitespace).
+    """
+    return set(re.findall(r"^def\s+([A-Za-z_]\w*)", source, re.MULTILINE))
+
+
+def _extract_hip_entry_points(source: str) -> set[str]:
+    """Return the set of ``__global__ void <name>`` kernel names."""
+    return set(re.findall(r"__global__\s+void\s+([A-Za-z_]\w*)", source))
+
+
+def _extract_entry_points(source: str, language: str) -> set[str]:
+    lang = _canonicalize_language(language) or ""
+    if lang == "triton":
+        return _extract_python_entry_points(source)
+    if lang in {"hip", "cuda"}:
+        return _extract_hip_entry_points(source)
+    # Other languages: try both.  Translation pairs outside the
+    # registered set should still produce a non-empty set when
+    # possible.
+    out = _extract_python_entry_points(source) | _extract_hip_entry_points(source)
+    return out
+
+
+def _always_true_verifier(_candidate: str) -> bool:
+    """No-verify fallback used only when no harness is supplied.
+
+    Never used in production; kept for tests that want to bypass the
+    verifier entirely.
     """
     return True
 
@@ -97,20 +239,27 @@ class TranslationPhase(Phase):
                 "Translation requires a local path to the source kernel file."
             )
         source_code = src_path.read_text(encoding="utf-8")
+        source_lang = source or "unknown"
 
         agent = self._build_agent(target)
-        verify_fn = self._build_verify_fn(ctx, target)
+        verify_fn = self._build_verify_fn(
+            ctx=ctx,
+            target=target,
+            source_code=source_code,
+            source_language=source_lang,
+        )
 
         logger.info(
             "  Running TranslationAgent (src=%s, tgt=%s, max_attempts=3)",
-            source or "unknown",
+            source_lang,
             target,
         )
         result = agent.loop(
             max_attempts=3,
             verify_fn=verify_fn,
             source_code=source_code,
-            source_language=source or "unknown",
+            source_language=source_lang,
+            hints=self._load_pair_hints(src_path, target, source_lang),
         )
 
         if not result.ok:
@@ -159,14 +308,7 @@ class TranslationPhase(Phase):
         return ".py"  # sensible fallback
 
     def _build_agent(self, target: str) -> Any:
-        """Instantiate TranslationAgent with the target KernelLanguage.
-
-        For this commit we use the registry's default KernelLanguage
-        lookup.  When the language-specific translation prompt files
-        land (PR-2 follow-up), ``self.language.system_prompt_path``
-        will carry the pair-specific guidance; until then the agent
-        uses its built-in default prompt.
-        """
+        """Instantiate TranslationAgent with the target KernelLanguage."""
         from minisweagent.kernel_languages import registry
         from minisweagent.subagents.base import SubagentConfig
         from minisweagent.subagents.translation import TranslationAgent
@@ -192,35 +334,124 @@ class TranslationPhase(Phase):
             agent.model = self._injected_model
         return agent
 
-    def _build_verify_fn(self, ctx: PhaseContext, target: str) -> Any:
-        """Build a verifier.
+    @staticmethod
+    def _load_pair_hints(src_path: Path, target: str, source_lang: str) -> str:
+        """Return the pair-specific translation hint markdown, or fallback.
 
-        When a harness is available in ``ctx.harness``, the verifier
-        would run the translated candidate through it and
-        tensor-allclose the outputs against golden tensors captured
-        from the source.  That requires filesystem-side running which
-        this skeleton leaves for a follow-up commit — for now the
-        verifier is permissive (accepts any non-empty candidate).
-
-        Callers wanting strict verification today can pass their own
-        ``verify_fn`` by constructing a ``TranslationPhase`` subclass.
+        Looks up the source ``KernelLanguage`` and calls its
+        ``translation_hints_for(target)`` helper, which internally
+        resolves ``<src>_to_<target>.md`` -> ``_fallback.md`` -> ``""``.
         """
+        if not source_lang:
+            return ""
+        from minisweagent.kernel_languages import registry
+
+        src_lang = registry.get(source_lang)
+        if src_lang is None:
+            return ""
+        try:
+            return src_lang.translation_hints_for(target)
+        except Exception:
+            return ""
+
+    def _build_verify_fn(
+        self,
+        *,
+        ctx: PhaseContext,
+        target: str,
+        source_code: str,
+        source_language: str,
+    ) -> Any:
+        """Build a verifier for the TranslationAgent loop.
+
+        The verifier layers three checks:
+
+          1. **Structural** — the translated candidate must declare at
+             least one of the source kernel's entry-point names.  A
+             translation that silently renames the public interface
+             is broken by construction (the user's downstream harness
+             imports by name).
+          2. **Syntactic** — the candidate must contain tokens that
+             identify it as target-language code (``tl.`` for Triton,
+             ``__global__`` for HIP/CUDA).  Catches obvious language-
+             mismatch failures.
+          3. **Golden-tensor (harness-based)** — when a harness path
+             is supplied on ``ctx.harness``, run it against the
+             candidate and tensor-allclose the outputs against golden
+             tensors captured from the source.  This tier is a hook
+             today; callers who need it can pass their own
+             ``verify_fn`` via ``TranslationAgent.loop``.
+        """
+        source_entry_points = _extract_entry_points(source_code, source_language)
+
+        # Pre-compiled patterns for the syntactic layer.  Word-
+        # boundary anchored so substrings like "not_hip" don't
+        # false-accept a Python function as HIP code.
+        _HIP_MARKERS = re.compile(
+            r"__global__|hipLaunchKernelGGL|\bhip[A-Z]\w*\s*\("
+            r"|#\s*include\s*[<\"]hip/"
+        )
+        _CUDA_MARKERS = re.compile(
+            r"__global__|cudaLaunchKernel|\bcuda[A-Z]\w*\s*\("
+            r"|#\s*include\s*[<\"]cuda"
+        )
+        _TRITON_MARKERS = re.compile(
+            r"@triton\.jit\b|\btl\.|\bfrom\s+triton\b|\bimport\s+triton\b"
+        )
 
         def _verify(candidate: str) -> tuple[bool, str]:
+            # Layer 2 (syntactic) — cheapest check, runs first so we
+            # catch completely wrong outputs before parsing.  Uses
+            # word-boundary patterns so identifiers containing
+            # language keywords (e.g. a Python function literally
+            # named ``not_hip``) don't false-accept.
             if not candidate or not candidate.strip():
                 return False, "empty candidate"
-            # Heuristic correctness gate until the golden-tensor
-            # harness hook-up lands: ensure the candidate looks like
-            # code for the target language.
-            if target == "hip" and "hip" not in candidate.lower() and "__global__" not in candidate:
-                return False, "candidate does not look like HIP code"
-            if target == "cuda" and "__global__" not in candidate and "cuda" not in candidate.lower():
-                return False, "candidate does not look like CUDA code"
-            if target == "triton" and "triton" not in candidate.lower():
-                return False, "candidate does not look like Triton code"
+
+            if target == "hip":
+                if not _HIP_MARKERS.search(candidate):
+                    return False, "candidate does not look like HIP code (missing __global__ / hipX()/#include <hip/>)"
+            elif target == "cuda":
+                if not _CUDA_MARKERS.search(candidate):
+                    return False, "candidate does not look like CUDA code (missing __global__ / cudaX()/#include <cuda)"
+            elif target == "triton":
+                if not _TRITON_MARKERS.search(candidate):
+                    return False, "candidate does not look like Triton code (missing @triton.jit / tl. / import triton)"
+
+            # Layer 1 (structural) — entry-point preservation.
+            # Only enforced when the source had detectable entry
+            # points AND the target language has detectable entry
+            # points (otherwise we skip this layer rather than
+            # false-reject).
+            if source_entry_points:
+                target_entry_points = _extract_entry_points(candidate, target)
+                if target_entry_points:
+                    missing = source_entry_points - target_entry_points
+                    # Require at least ONE source entry point to be
+                    # present (translations may split a single source
+                    # function into multiple device kernels).
+                    if missing and not (source_entry_points & target_entry_points):
+                        return False, (
+                            f"translation drops all source entry points "
+                            f"(source={sorted(source_entry_points)}, "
+                            f"target={sorted(target_entry_points)})"
+                        )
+
+            # Layer 3 (golden-tensor, opt-in) — when ``ctx.harness``
+            # is set and callers specifically want strict verification,
+            # they can pass their own ``verify_fn`` via loop() kwargs.
+            # The default verifier does NOT invoke subprocess here
+            # because (a) the harness typically imports from the
+            # source kernel path, which doesn't exist in the target
+            # language, and (b) running untrusted LLM-generated code
+            # in-process needs a sandbox we don't have yet.
             return True, ""
 
         return _verify
 
 
-__all__ = ["TranslationPhase"]
+__all__ = [
+    "TranslationPhase",
+    "PerformanceReport",
+    "validate_translation_performance",
+]
