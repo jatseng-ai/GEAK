@@ -8,8 +8,11 @@ This script catches the narrow pattern (literal equality comparisons). The broad
 semantic sites (dict dispatch, prompt templates, _LANGUAGE_GUIDANCE maps) are
 tracked separately by inspection during PR-2 and PR-3.
 
-Runs as WARN-only today; becomes FAIL-strict after PR-2 lands (language detection
-and phase-based preprocess should eliminate these sites).
+FAIL-strict: literal-equality language checks are forbidden outside
+``kernel_languages/``.  Core code MUST route through
+``kernel_languages.registry`` for language detection.  If you land a
+new violation, either move the check into a new/existing language
+bundle or use ``registry.detect_best()`` / ``registry.detect_best_by_name()``.
 """
 
 from __future__ import annotations
@@ -58,18 +61,22 @@ def main() -> int:
         print("[OK] No literal kernel_type==\"triton\"|\"hip\" leaks outside kernel_languages/")
         return 0
 
-    # Pre-PR-2: WARN only (these will be fixed as part of PR-2/PR-3 refactor).
-    # Post-PR-2: flip to FAIL. Controlled by env var.
-    import os as _os
-    strict = _os.environ.get("GEAK_LANG_LEAK_STRICT", "0") == "1"
-    level = "FAIL" if strict else "WARN"
-
-    print(f"[{level}] {len(violations)} literal language-equality leaks "
-          f"(will be FAIL after PR-2 if strict=1):")
+    # FAIL-strict: any literal-equality language check outside
+    # kernel_languages/ breaks the build.  The intended mitigation for
+    # any new violation is always:
+    #   1. Move the check into a language bundle (per-language data), OR
+    #   2. Use ``kernel_languages.registry.detect_best()`` /
+    #      ``detect_best_by_name()`` for the routing.
+    print(f"[FAIL] {len(violations)} literal language-equality leak(s) "
+          f"in core code:")
     for p, lineno, line in violations:
         print(f"  {p}:{lineno}  {line}")
-
-    return 1 if strict else 0
+    print(
+        "\nHint: route language detection through "
+        "``kernel_languages.registry`` instead of literal equality "
+        "against a language name."
+    )
+    return 1
 
 
 if __name__ == "__main__":
