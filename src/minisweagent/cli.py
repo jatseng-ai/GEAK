@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 
-"""Backup mini entry with kernel-type routing."""
+"""The single GEAK CLI entry point.
+
+Exposes ``geak -t "<prompt>"`` and delegates every execution mode
+(``fixed`` / ``planned`` / ``auto`` / ``translate``) through
+``run/unified.py::run_pipeline(ctx, mode)``.  Discovery, harness building,
+baseline measurement, and optimization are all reachable from here; the
+underlying modules remain callable programmatically.
+
+Moved from ``run/mini.py`` during the CLI consolidation.  The old module
+path is no longer exported; update any external imports to
+``from minisweagent.cli import app``.
+"""
 
 import logging
 import shlex

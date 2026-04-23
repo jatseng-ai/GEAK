@@ -1,7 +1,7 @@
 """`KernelLanguage` registry — one detection site for all language routing.
 
 Replaces the 3 scattered detection functions in today's codebase:
-  - src/minisweagent/run/mini.py::_normalize_kernel_type
+  - src/minisweagent/cli.py::_normalize_kernel_type
   - src/minisweagent/agents/heterogeneous/task_generator.py::_infer_kernel_type
   - src/minisweagent/run/preprocess/discovery_types.py::_infer_kernel_language
 

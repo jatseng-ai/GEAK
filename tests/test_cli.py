@@ -1,4 +1,4 @@
-"""Unit tests for helpers in ``minisweagent.run.mini`` (no full CLI / preprocess run)."""
+"""Unit tests for helpers in ``minisweagent.cli`` (no full CLI / preprocess run)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from minisweagent.run import mini as mini_module
+from minisweagent import cli as mini_module
 
 
 class TestDeepMerge:

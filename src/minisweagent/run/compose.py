@@ -3,7 +3,7 @@
 Before this module existed the task body was assembled in two very different
 places depending on mode:
 
-  - **fixed**   — inside ``run/mini.py`` by concatenating the user prompt
+  - **fixed**   — inside ``cli.py`` by concatenating the user prompt
     with ``assemble_memory_context`` output (formerly "homogeneous" — one
     prompt replicated across N parallel agents).
   - **planned** — inside ``agents/heterogeneous/orchestrator.py`` and
