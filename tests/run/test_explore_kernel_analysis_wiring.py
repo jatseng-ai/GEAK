@@ -9,8 +9,9 @@ Pins:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +21,13 @@ from minisweagent.run.preprocess.phases.explore import (
     ExplorePhase,
     _try_kernel_analysis,
 )
+
+
+@pytest.fixture
+def kernel_analysis_enabled():
+    """Enable the KernelAnalysisAgent env gate for tests that need it."""
+    with patch.dict(os.environ, {"GEAK_USE_KERNEL_ANALYSIS": "1"}):
+        yield
 
 
 def _good_rubric() -> str:
@@ -45,8 +53,47 @@ def _fake_language(tmp_path: Path) -> MagicMock:
 # ──────────────────────────────────────────────────────────────────────
 
 
+class TestEnvGate:
+    """KernelAnalysisAgent is OFF by default; enabled via GEAK_USE_KERNEL_ANALYSIS=1."""
+
+    def test_gated_off_by_default(self, tmp_path: Path) -> None:
+        kernel = tmp_path / "k.py"
+        kernel.write_text("pass")
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(kernel)
+        ctx.language = _fake_language(tmp_path)
+        model = MagicMock()
+        model.query = MagicMock(return_value=_good_rubric())
+        ctx.model = model
+
+        # Env var unset -> gate OFF
+        env_without_gate = {k: v for k, v in os.environ.items() if k != "GEAK_USE_KERNEL_ANALYSIS"}
+        with patch.dict(os.environ, env_without_gate, clear=True):
+            _try_kernel_analysis(ctx, output_dir=tmp_path)
+        assert ctx.kernel_analysis_md is None, (
+            "KernelAnalysisAgent should be gated OFF by default "
+            "(GEAK_USE_KERNEL_ANALYSIS!=1)"
+        )
+
+    def test_gated_off_when_env_var_is_zero(self, tmp_path: Path) -> None:
+        kernel = tmp_path / "k.py"
+        kernel.write_text("pass")
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(kernel)
+        ctx.language = _fake_language(tmp_path)
+        model = MagicMock()
+        model.query = MagicMock(return_value=_good_rubric())
+        ctx.model = model
+
+        with patch.dict(os.environ, {"GEAK_USE_KERNEL_ANALYSIS": "0"}):
+            _try_kernel_analysis(ctx, output_dir=tmp_path)
+        assert ctx.kernel_analysis_md is None
+
+
 class TestAnalysisWiringGates:
-    def test_skipped_when_language_none(self, tmp_path: Path) -> None:
+    def test_skipped_when_language_none(
+        self, tmp_path: Path, kernel_analysis_enabled
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)
@@ -57,7 +104,9 @@ class TestAnalysisWiringGates:
         _try_kernel_analysis(ctx, output_dir=tmp_path)
         assert ctx.kernel_analysis_md is None
 
-    def test_skipped_when_kernel_missing(self, tmp_path: Path) -> None:
+    def test_skipped_when_kernel_missing(
+        self, tmp_path: Path, kernel_analysis_enabled
+    ) -> None:
         ctx = PhaseContext(output_dir=tmp_path)
         ctx.kernel_path = ""
         ctx.language = _fake_language(tmp_path)
@@ -66,7 +115,9 @@ class TestAnalysisWiringGates:
         _try_kernel_analysis(ctx, output_dir=tmp_path)
         assert ctx.kernel_analysis_md is None
 
-    def test_skipped_when_model_unavailable(self, tmp_path: Path) -> None:
+    def test_skipped_when_model_unavailable(
+        self, tmp_path: Path, kernel_analysis_enabled
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)
@@ -78,7 +129,9 @@ class TestAnalysisWiringGates:
         _try_kernel_analysis(ctx, output_dir=tmp_path)
         assert ctx.kernel_analysis_md is None
 
-    def test_success_populates_kernel_analysis_md(self, tmp_path: Path) -> None:
+    def test_success_populates_kernel_analysis_md(
+        self, tmp_path: Path, kernel_analysis_enabled
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)
@@ -95,7 +148,9 @@ class TestAnalysisWiringGates:
         # File written to disk
         assert (tmp_path / "kernel_analysis.md").exists()
 
-    def test_subagent_exception_swallowed(self, tmp_path: Path) -> None:
+    def test_subagent_exception_swallowed(
+        self, tmp_path: Path, kernel_analysis_enabled
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)

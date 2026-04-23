@@ -30,6 +30,7 @@ Both paths write ``{output_dir}/COMMANDMENT.md`` and run the universal
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -243,7 +244,16 @@ class ExplorePhase(Phase):
 def _try_kernel_analysis(ctx: PhaseContext, *, output_dir: Path) -> None:
     """Produce the [A]-[D] rubric via KernelAnalysisAgent (D2).
 
-    Silently skips when:
+    GATED BEHIND ``GEAK_USE_KERNEL_ANALYSIS=1`` — OFF BY DEFAULT.
+
+    Rationale: the rubric subagent is NEW in the refactor pipeline
+    (no equivalent in ``origin/main``).  When we run parity tests
+    against the old pipeline, we need an apples-to-apples comparison
+    with this subagent OFF.  Set ``GEAK_USE_KERNEL_ANALYSIS=1`` in
+    the environment to enable it.
+
+    Silently skips when any of:
+      - ``GEAK_USE_KERNEL_ANALYSIS`` is not ``"1"`` (default).
       - ``ctx.language`` is None (DiscoveryPhase did not resolve a
         KernelLanguage — nothing to feed the subagent with).
       - No model is available (``ctx.model`` unset AND no model
@@ -255,6 +265,11 @@ def _try_kernel_analysis(ctx: PhaseContext, *, output_dir: Path) -> None:
     markdown string (so ``compose_task_body`` can inject it without
     re-reading from disk).
     """
+    if os.environ.get("GEAK_USE_KERNEL_ANALYSIS", "0") != "1":
+        logger.debug(
+            "  KernelAnalysisAgent: gated off (GEAK_USE_KERNEL_ANALYSIS!=1); skipping."
+        )
+        return
     if ctx.language is None:
         logger.debug("  KernelAnalysisAgent: ctx.language is None; skipping rubric.")
         return

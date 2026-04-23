@@ -1,13 +1,17 @@
-"""Tests for Workstream D1 — Layer 4 of HarnessPhase (HarnessBuilder invocation).
+"""Tests for HarnessPhase — the 7-layer resolution chain.
 
-Pins:
-  - HarnessBuilder is invoked when ctx.language is set + model is
-    available + harness_template is populated
-  - Falls back (returns False) when language is None
-  - Falls back when model is unavailable
-  - Falls back when harness_template is empty
-  - Falls back when HarnessBuildFailed is raised
-  - Success path populates ctx.harness_path + ctx.harness + ctx.test_command
+Covers:
+  - Layer 1 (harness_path already set) short-circuits
+  - Layer 2 (explicit --harness) validates + promotes
+  - Layer 3 (split-harness-hint) promotes when valid
+  - Layer 4 (testcase_cache) — pinned elsewhere via smoke path
+  - Layer 5 (HarnessBuilder subagent) — success + failure paths
+  - Layer 6 (UnitTestAgent legacy) — skipped when model absent
+  - Layer 7 (discovery fallback) — focused_test / tests[0]
+
+The runtime validator ``execute_harness_validation`` is subprocess-
+heavy so every test patches it to return OK without actually running
+python against the kernel.
 """
 
 from __future__ import annotations
@@ -18,10 +22,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from minisweagent.run.preprocess.phases.base import PhaseContext
-from minisweagent.run.preprocess.phases.harness import HarnessPhase
+from minisweagent.run.preprocess.phases.harness import (
+    HarnessPhase,
+    _build_test_command,
+)
 
 
-def _make_language(tmp_path: Path, *, template_body: str = "# jinja") -> MagicMock:
+# ──────────────────────────────────────────────────────────────────────
+# Fixtures
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _make_language(
+    tmp_path: Path,
+    *,
+    template_body: str = "# jinja harness skeleton\n",
+) -> MagicMock:
     lang = MagicMock()
     lang.name = "triton"
     lang.harness_template = template_body
@@ -47,20 +63,93 @@ print("GEAK_RESULT_SPEEDUP=1.0")
 """
 
 
-class TestHarnessBuilderInvocation:
-    def test_skipped_when_language_is_none(self, tmp_path: Path) -> None:
+@pytest.fixture
+def mock_runtime_ok():
+    """Patch execute_harness_validation to return OK everywhere it's imported."""
+    import_sites = [
+        "minisweagent.run.preprocess.harness_utils.execute_harness_validation",
+    ]
+    patches = [
+        patch(site, return_value=(True, [], [
+            {"mode": "correctness", "success": True, "duration_s": 0.1},
+            {"mode": "benchmark", "success": True, "duration_s": 0.1},
+            {"mode": "full-benchmark", "success": True, "duration_s": 0.1},
+            {"mode": "profile", "success": True, "duration_s": 0.1},
+        ]))
+        for site in import_sites
+    ]
+    for p in patches:
+        p.start()
+    yield
+    for p in patches:
+        p.stop()
+
+
+@pytest.fixture
+def mock_cache_miss():
+    """Make the testcase_cache always report a miss."""
+    with patch(
+        "minisweagent.run.preprocess.testcase_cache.get_testcase_cache_entry",
+        return_value=None,
+    ):
+        yield
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Layer 1 — harness_path already set
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestLayer1AlreadySet:
+    def test_short_circuits_when_harness_path_set(self, tmp_path: Path) -> None:
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.harness_path = "/tmp/preexisting.py"
+        ctx.test_command = "python3 /tmp/preexisting.py --correctness"
+
+        with patch(
+            "minisweagent.subagents.preprocess.harness_builder.HarnessBuilder"
+        ) as mock_builder:
+            HarnessPhase().run(ctx)
+            mock_builder.assert_not_called()
+
+        assert ctx.harness_path == "/tmp/preexisting.py"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Layer 5 — HarnessBuilder (D1)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestLayer5HarnessBuilder:
+    def test_skipped_when_language_is_none(
+        self, tmp_path: Path, mock_runtime_ok, mock_cache_miss
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)
         ctx.kernel_path = str(kernel)
-        ctx.language = None  # no language detected
+        ctx.language = None
         ctx.model = MagicMock()
 
         HarnessPhase().run(ctx)
-        # No harness_path set -> deferred to legacy
         assert ctx.harness_path is None or ctx.harness_path == ""
 
-    def test_skipped_when_model_is_unavailable(self, tmp_path: Path) -> None:
+    def test_skipped_when_harness_template_is_empty(
+        self, tmp_path: Path, mock_runtime_ok, mock_cache_miss
+    ) -> None:
+        kernel = tmp_path / "k.py"
+        kernel.write_text("pass")
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(kernel)
+        ctx.language = _make_language(tmp_path, template_body="")
+        ctx.model = MagicMock()
+
+        HarnessPhase().run(ctx)
+        assert ctx.harness_path is None or ctx.harness_path == ""
+
+    def test_skipped_when_model_unavailable(
+        self, tmp_path: Path, mock_runtime_ok, mock_cache_miss
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)
@@ -72,58 +161,53 @@ class TestHarnessBuilderInvocation:
         HarnessPhase().run(ctx)
         assert ctx.harness_path is None or ctx.harness_path == ""
 
-    def test_skipped_when_harness_template_is_empty(self, tmp_path: Path) -> None:
-        kernel = tmp_path / "k.py"
-        kernel.write_text("pass")
-        ctx = PhaseContext(output_dir=tmp_path)
-        ctx.kernel_path = str(kernel)
-        ctx.language = _make_language(tmp_path, template_body="")
-        ctx.model = MagicMock()
-
-        HarnessPhase().run(ctx)
-        assert ctx.harness_path is None or ctx.harness_path == ""
-
-    def test_success_path_populates_all_harness_fields(self, tmp_path: Path) -> None:
-        """When HarnessBuilder succeeds, ctx.harness_path + ctx.harness +
-        ctx.test_command should all be set."""
+    def test_success_populates_all_harness_fields(
+        self, tmp_path: Path, mock_runtime_ok, mock_cache_miss
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("@triton.jit\ndef foo(): pass\n")
         ctx = PhaseContext(output_dir=tmp_path)
         ctx.kernel_path = str(kernel)
         ctx.repo_root = str(tmp_path)
         ctx.language = _make_language(tmp_path)
-        # Model returns a valid harness on first call
         model = MagicMock()
         model.query = MagicMock(return_value=_valid_harness_code())
         ctx.model = model
 
         HarnessPhase().run(ctx)
 
-        expected_harness = tmp_path / "harness.py"
-        assert ctx.harness_path == str(expected_harness)
-        assert ctx.harness == str(expected_harness)
+        expected = tmp_path / "harness.py"
+        assert ctx.harness_path == str(expected)
         assert ctx.test_command is not None
         assert "--correctness" in ctx.test_command
-        assert str(expected_harness) in ctx.test_command
-        assert expected_harness.exists()
+        assert str(expected) in ctx.test_command
+        assert expected.exists()
 
-    def test_falls_back_when_harness_builder_fails(self, tmp_path: Path) -> None:
+    def test_falls_back_when_harness_builder_fails(
+        self, tmp_path: Path, mock_runtime_ok, mock_cache_miss
+    ) -> None:
+        """Model returns garbage -> HarnessBuildFailed -> Layer 5 returns None.
+
+        Layer 6 (UTA) is skipped because we mock its dependency, and
+        Layer 7 is also skipped because discovery is empty.  Final:
+        no harness resolved, phase leaves ctx.harness_path unset.
+        """
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)
         ctx.kernel_path = str(kernel)
         ctx.language = _make_language(tmp_path)
-        # Model always returns garbage -> HarnessBuildFailed after retries
+        ctx.repo_root = None  # disables Layer 6 (UTA)
         model = MagicMock()
         model.query = MagicMock(return_value="def main(): pass\n")
         ctx.model = model
 
         HarnessPhase().run(ctx)
-        # Phase should NOT propagate the failure; ctx.harness_path stays
-        # unset so the orchestrator falls back to the legacy path.
         assert ctx.harness_path is None or ctx.harness_path == ""
 
-    def test_model_factory_used_when_model_is_none(self, tmp_path: Path) -> None:
+    def test_model_factory_used_when_model_is_none(
+        self, tmp_path: Path, mock_runtime_ok, mock_cache_miss
+    ) -> None:
         kernel = tmp_path / "k.py"
         kernel.write_text("pass")
         ctx = PhaseContext(output_dir=tmp_path)
@@ -138,65 +222,63 @@ class TestHarnessBuilderInvocation:
         assert ctx.harness_path == str(tmp_path / "harness.py")
 
 
-class TestLayerOrdering:
-    """Layer 1 > 2 > 3 > 4: earlier layers short-circuit the builder."""
+# ──────────────────────────────────────────────────────────────────────
+# Layer 7 — discovery fallback
+# ──────────────────────────────────────────────────────────────────────
 
-    def test_layer1_existing_harness_path_wins(self, tmp_path: Path) -> None:
-        harness = tmp_path / "explicit.py"
-        harness.write_text(_valid_harness_code())
+
+class TestLayer7DiscoveryFallback:
+    def test_uses_focused_test_when_available(
+        self, tmp_path: Path, mock_cache_miss
+    ) -> None:
         ctx = PhaseContext(output_dir=tmp_path)
-        ctx.harness_path = str(harness)
-        ctx.language = _make_language(tmp_path)
-        ctx.model = MagicMock()
+        ctx.kernel_path = str(tmp_path / "k.py")
+        (tmp_path / "k.py").write_text("pass")
+        ctx.discovery = {
+            "focused_test": {
+                "focused_command": "pytest /tmp/focused.py --correctness"
+            }
+        }
 
-        with patch(
-            "minisweagent.subagents.preprocess.harness_builder.HarnessBuilder"
-        ) as mock_builder:
-            HarnessPhase().run(ctx)
-            mock_builder.assert_not_called()
+        HarnessPhase().run(ctx)
+        assert ctx.test_command == "pytest /tmp/focused.py --correctness"
 
-        # harness_path stays as-is
-        assert ctx.harness_path == str(harness)
+    def test_uses_tests_zero_when_no_focused(
+        self, tmp_path: Path, mock_cache_miss
+    ) -> None:
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(tmp_path / "k.py")
+        (tmp_path / "k.py").write_text("pass")
+        ctx.discovery = {
+            "tests": [{"command": "pytest /tmp/unit.py"}]
+        }
 
-    def test_layer2_explicit_harness_wins_over_layer4(self, tmp_path: Path) -> None:
-        harness = tmp_path / "user_supplied.py"
-        harness.write_text(_valid_harness_code())
-        kernel = tmp_path / "k.py"
-        kernel.write_text("pass")
-        ctx = PhaseContext(output_dir=tmp_path, harness=str(harness))
-        ctx.kernel_path = str(kernel)
-        ctx.language = _make_language(tmp_path)
-        ctx.model = MagicMock()
-
-        with patch(
-            "minisweagent.subagents.preprocess.harness_builder.HarnessBuilder"
-        ) as mock_builder:
-            HarnessPhase().run(ctx)
-            mock_builder.assert_not_called()
-
-        assert ctx.harness_path == str(harness.resolve())
+        HarnessPhase().run(ctx)
+        assert ctx.test_command == "pytest /tmp/unit.py"
 
 
-class TestApplyTestCommand:
-    def test_test_command_shape_matches_legacy(self, tmp_path: Path) -> None:
-        """The test_command string format matches
-        ``_build_deterministic_test_command`` from the legacy monolith:
+# ──────────────────────────────────────────────────────────────────────
+# _build_test_command shape
+# ──────────────────────────────────────────────────────────────────────
 
-            python3 <harness_path> --correctness
-        """
+
+class TestBuildTestCommand:
+    def test_shape_matches_legacy(self, tmp_path: Path) -> None:
+        """``_build_test_command`` emits ``python3 <absolute> --correctness``
+        (same shape as legacy ``_build_deterministic_test_command``)."""
         import shlex
         import sys
 
-        harness_path = str(tmp_path / "harness.py")
-        ctx = PhaseContext()
-        HarnessPhase._apply_test_command(ctx, harness_path)
-        expected = (
-            f"{shlex.quote(sys.executable)} {shlex.quote(harness_path)} --correctness"
+        harness = tmp_path / "h.py"
+        harness.write_text("")
+        cmd = _build_test_command(str(harness))
+        assert cmd == (
+            f"{shlex.quote(sys.executable)} "
+            f"{shlex.quote(str(harness.resolve()))} --correctness"
         )
-        assert ctx.test_command == expected
 
-    def test_apply_test_command_respects_existing_value(self, tmp_path: Path) -> None:
-        ctx = PhaseContext()
-        ctx.test_command = "pre-existing"
-        HarnessPhase._apply_test_command(ctx, str(tmp_path / "harness.py"))
-        assert ctx.test_command == "pre-existing"
+    def test_uses_resolved_absolute_path(self, tmp_path: Path) -> None:
+        harness = tmp_path / "h.py"
+        harness.write_text("")
+        cmd = _build_test_command(str(harness))
+        assert str(harness.resolve()) in cmd

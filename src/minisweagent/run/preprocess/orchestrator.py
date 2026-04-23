@@ -30,7 +30,6 @@ interim commit rollback-safe without creating a second runtime path.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -94,12 +93,17 @@ class PreprocessOrchestrator:
             # early after HarnessPhase.  Test harnesses that only need
             # the harness generated + validated (no profiling, no
             # baseline metrics, no commandment) use this env flag.
-            if phase.name == HarnessPhase.name and os.environ.get("GEAK_HARNESS_ONLY") == "1":
-                logger.info(
-                    "GEAK_HARNESS_ONLY=1: returning after HarnessPhase "
-                    "(skipping baseline + explore)."
+            if phase.name == HarnessPhase.name:
+                from minisweagent.run.preprocess.phases.harness import (
+                    is_harness_only_mode,
                 )
-                return ctx
+
+                if is_harness_only_mode():
+                    logger.info(
+                        "GEAK_HARNESS_ONLY=1: returning after HarnessPhase "
+                        "(skipping baseline + explore)."
+                    )
+                    return ctx
 
         return ctx
 

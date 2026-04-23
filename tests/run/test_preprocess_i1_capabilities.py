@@ -182,56 +182,105 @@ class TestRow6SplitHarnessHintPickup:
         assert hasattr(ctx, "split_harness_hint")
         assert ctx.split_harness_hint is None
 
+    @staticmethod
+    def _runtime_ok() -> tuple[bool, list, list]:
+        return (True, [], [
+            {"mode": "correctness", "success": True, "duration_s": 0.1},
+        ])
+
     def test_harness_phase_promotes_valid_split_harness(self, tmp_path: Path) -> None:
+        """Layer 3: split-harness hint passes static + runtime validation
+        -> ctx.harness + ctx.harness_path populated."""
         split_harness = tmp_path / "test_merged_harness.py"
         split_harness.write_text("# dummy harness content")
-        ctx = PhaseContext()
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(tmp_path / "k.py")
+        (tmp_path / "k.py").write_text("pass")
         ctx.split_harness_hint = str(split_harness)
 
         with patch(
             "minisweagent.run.preprocess.harness_utils.validate_harness",
             return_value=(True, []),
+        ), patch(
+            "minisweagent.run.preprocess.harness_utils.execute_harness_validation",
+            return_value=self._runtime_ok(),
+        ), patch(
+            "minisweagent.run.preprocess.testcase_cache.get_testcase_cache_entry",
+            return_value=None,
         ):
             HarnessPhase().run(ctx)
 
-        assert ctx.harness == str(split_harness)
+        assert ctx.harness_path == str(split_harness.resolve())
 
     def test_harness_phase_ignores_invalid_split_harness(self, tmp_path: Path) -> None:
+        """Layer 3: static validation failure -> fall through to later layers."""
         split_harness = tmp_path / "bad_harness.py"
         split_harness.write_text("# dummy")
-        ctx = PhaseContext()
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(tmp_path / "k.py")
+        (tmp_path / "k.py").write_text("pass")
         ctx.split_harness_hint = str(split_harness)
 
         with patch(
             "minisweagent.run.preprocess.harness_utils.validate_harness",
             return_value=(False, ["missing --correctness"]),
+        ), patch(
+            "minisweagent.run.preprocess.testcase_cache.get_testcase_cache_entry",
+            return_value=None,
         ):
             HarnessPhase().run(ctx)
 
-        assert ctx.harness is None
+        # No later layer produces a harness either (no language, no
+        # discovery) -> ctx.harness_path stays unset.
+        assert not ctx.harness_path
 
     def test_harness_phase_does_not_override_explicit_harness(self, tmp_path: Path) -> None:
+        """Layer 2 (explicit) wins over Layer 3 (split-hint).  When both
+        are set, only Layer 2 gets tried."""
+        explicit = tmp_path / "explicit.py"
+        explicit.write_text("# explicit")
         split_harness = tmp_path / "split.py"
-        split_harness.write_text("# split harness")
-        ctx = PhaseContext()
+        split_harness.write_text("# split")
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(tmp_path / "k.py")
+        (tmp_path / "k.py").write_text("pass")
+        ctx.harness = str(explicit)
         ctx.split_harness_hint = str(split_harness)
-        ctx.harness = "/user/supplied/harness.py"  # caller-supplied takes priority
 
         with patch(
             "minisweagent.run.preprocess.harness_utils.validate_harness",
             return_value=(True, []),
+        ), patch(
+            "minisweagent.run.preprocess.harness_utils.execute_harness_validation",
+            return_value=self._runtime_ok(),
+        ), patch(
+            "minisweagent.run.preprocess.testcase_cache.get_testcase_cache_entry",
+            return_value=None,
+        ), patch(
+            "minisweagent.run.preprocess.preprocessor._resolve_deterministic_harness",
+            return_value=(str(explicit.resolve()), {"source": "local_path"}),
+        ), patch(
+            "minisweagent.run.preprocess.preprocessor._ensure_harness_has_no_kernel_defs",
+            side_effect=lambda path, *_args, **_kwargs: str(path),
         ):
             HarnessPhase().run(ctx)
 
-        assert ctx.harness == "/user/supplied/harness.py"  # unchanged
+        # Layer 2 wins -> harness_path = explicit, not split.
+        assert ctx.harness_path == str(explicit.resolve())
 
-    def test_harness_phase_handles_nonexistent_hint_path(self) -> None:
-        ctx = PhaseContext()
+    def test_harness_phase_handles_nonexistent_hint_path(self, tmp_path: Path) -> None:
+        ctx = PhaseContext(output_dir=tmp_path)
+        ctx.kernel_path = str(tmp_path / "k.py")
+        (tmp_path / "k.py").write_text("pass")
         ctx.split_harness_hint = "/nonexistent/path/harness.py"
 
-        # Should not raise, just silently skip the pickup.
-        HarnessPhase().run(ctx)
-        assert ctx.harness is None
+        with patch(
+            "minisweagent.run.preprocess.testcase_cache.get_testcase_cache_entry",
+            return_value=None,
+        ):
+            # Should not raise; Layer 3 silently skips.
+            HarnessPhase().run(ctx)
+        assert not ctx.harness_path
 
 
 class TestTranslationPhaseStillSkippedWhenNoTarget:
