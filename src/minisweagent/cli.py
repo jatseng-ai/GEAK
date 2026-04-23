@@ -3,14 +3,18 @@
 """The single GEAK CLI entry point.
 
 Exposes ``geak -t "<prompt>"`` and delegates every execution mode
-(``fixed`` / ``planned`` / ``auto`` / ``translate``) through
+(``fixed`` / ``planned`` / ``auto``) through
 ``run/unified.py::run_pipeline(ctx, mode)``.  Discovery, harness building,
 baseline measurement, and optimization are all reachable from here; the
 underlying modules remain callable programmatically.
 
-Moved from ``run/mini.py`` during the CLI consolidation.  The old module
-path is no longer exported; update any external imports to
-``from minisweagent.cli import app``.
+Translation (source→target language) is NOT a run_pipeline mode.  It is
+a conditional preprocess phase triggered by ``--target-language`` (or the
+LLM-extracted ``target_language`` field); the phase runs before
+run_pipeline, uses a standalone ``TranslationAgent`` (not
+``OptimizationAgent``), and hands a translated kernel back for the rest
+of the pipeline to optimize.  Implementation lands in the preprocessing
+refactor PR.
 """
 
 import logging

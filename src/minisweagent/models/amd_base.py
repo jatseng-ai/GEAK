@@ -11,7 +11,7 @@ from minisweagent.tools.tools_runtime import get_tools_list
 logger = logging.getLogger(__name__)
 
 # When ``profiling`` is false, strip both the built-in ``profiling`` tool and the
-# MCP ``profile_kernel`` tool (same pairing as ``mini.py`` / ``disabled_tools``).
+# MCP ``profile_kernel`` tool (same pairing as ``cli.py`` / ``disabled_tools``).
 _PROFILING_TOOL_NAMES: frozenset[str] = frozenset({"profiling", "profile_kernel"})
 
 

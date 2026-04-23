@@ -84,7 +84,7 @@ class _Registry:
     def detect_best_by_name(self, name: str) -> Optional[KernelLanguage]:
         """Legacy shim for code that passes a string like 'triton' instead of a Path.
 
-        Replaces `_normalize_kernel_type` from today's mini.py.
+        Replaces ``_normalize_kernel_type`` from today's ``cli.py``.
         """
         n = (name or "").strip().lower()
         # Existing codebase normalizations: both 'triton' and 'rocm' sometimes

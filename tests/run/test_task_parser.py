@@ -181,6 +181,47 @@ class TestParsePipelineParams:
         out_false = tp.parse_pipeline_params("t", self._Model(json.dumps(payload_false)))
         assert out_false["mode"] == "fixed"
 
+    def test_legacy_translate_mode_string_is_dropped(self) -> None:
+        # Older prompts may still emit mode="translate" even though
+        # translation is now a preprocess phase signalled by
+        # target_language.  Drop it rather than crash.
+        payload = {
+            "kernel_url": None,
+            "preprocess_dir": None,
+            "mode": "translate",
+            "max_rounds": None,
+            "start_round": None,
+            "pipeline_intent": True,
+        }
+        out = tp.parse_pipeline_params("t", self._Model(json.dumps(payload)))
+        assert out["mode"] is None
+
+    def test_target_language_is_parsed_when_present(self) -> None:
+        payload = {
+            "kernel_url": None,
+            "preprocess_dir": None,
+            "mode": None,
+            "max_rounds": None,
+            "start_round": None,
+            "pipeline_intent": True,
+            "target_language": "TRITON",
+        }
+        out = tp.parse_pipeline_params("t", self._Model(json.dumps(payload)))
+        assert out["target_language"] == "triton"
+
+    def test_target_language_unknown_value_drops_to_none(self) -> None:
+        payload = {
+            "kernel_url": None,
+            "preprocess_dir": None,
+            "mode": None,
+            "max_rounds": None,
+            "start_round": None,
+            "pipeline_intent": True,
+            "target_language": "WebGL",  # not in the whitelist
+        }
+        out = tp.parse_pipeline_params("t", self._Model(json.dumps(payload)))
+        assert out["target_language"] is None
+
     def test_coerces_numeric_strings(self) -> None:
         payload = {
             "kernel_url": None,

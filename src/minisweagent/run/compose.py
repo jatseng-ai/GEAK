@@ -28,10 +28,18 @@ from ``run/unified.py``.
 
 Mode vocabulary (matches the end-state execution plan):
 
-  - ``fixed``     — one task body, replicated across ``num_parallel`` copies
-  - ``planned``   — N planner-generated task bodies (one per strategy)
-  - ``auto``      — controller picks ``fixed``-vs-``planned`` per round
-  - ``translate`` — source→target language translation loop (verify-retry)
+  - ``fixed``   — one task body, replicated across ``num_parallel`` copies
+  - ``planned`` — N planner-generated task bodies (one per strategy)
+  - ``auto``    — controller picks ``fixed``-vs-``planned`` per round
+
+Translation (source→target language) is NOT a ``run_pipeline`` mode.  It is
+a **conditional preprocess phase** that runs before the optimization
+loop when ``target_language ≠ source_language``; after it completes,
+``ctx.kernel_path`` and ``ctx.language`` are swapped to the translated
+kernel and the pipeline continues (or exits, if the user passed
+``--translate-only``).  The phase owns its own narrow ``TranslationAgent``
+subagent (a ``SubagentBase`` subclass with a verify-retry loop against
+golden tensors); it does NOT reuse ``OptimizationAgent``.
 """
 
 from __future__ import annotations
@@ -42,7 +50,7 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-Mode = Literal["fixed", "planned", "auto", "translate"]
+Mode = Literal["fixed", "planned", "auto"]
 
 
 @dataclass

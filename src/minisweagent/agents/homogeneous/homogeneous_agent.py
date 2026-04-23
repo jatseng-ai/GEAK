@@ -47,8 +47,8 @@ def run_homogeneous_agent(
     """
     Run homogeneous parallel agents.
 
-    This function is called from mini.py when agent_mode is 'homogeneous'.
-    Configuration is already loaded and merged by mini.py.
+    This function is called from ``cli.py`` via ``run_pipeline`` in fixed
+    mode.  Configuration is already loaded and merged upstream.
 
     Args:
         config: Merged configuration dict

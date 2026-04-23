@@ -1,4 +1,4 @@
-"""Unified pipeline entry for fixed + planned + auto + translate modes.
+"""Unified pipeline entry for fixed + planned + auto modes.
 
 Historically fixed (``run_homogeneous_agent``) and planned
 (``run_orchestrator``) took very different paths through the codebase even
@@ -9,16 +9,25 @@ collapses the surface area exposed to the CLI:
 
 Mode vocabulary (matches the execution plan end state):
 
-  - ``fixed``     — one task body, replicated across ``num_parallel`` copies
-                    (was "homogeneous" in the legacy vocabulary).
-  - ``planned``   — N planner-generated task bodies (one per strategy)
-                    dispatched in parallel (was "heterogeneous").
-  - ``auto``      — default.  Picks ``fixed`` or ``planned`` per kernel
-                    based on language heuristics (Triton→planned,
-                    HIP→fixed); future iterations will let the controller
-                    select per-round.
-  - ``translate`` — source→target language translation loop (verify-retry);
-                    currently raises NotImplementedError until PR-60 lands.
+  - ``fixed``   — one task body, replicated across ``num_parallel`` copies
+                  (was "homogeneous" in the legacy vocabulary).
+  - ``planned`` — N planner-generated task bodies (one per strategy)
+                  dispatched in parallel (was "heterogeneous").
+  - ``auto``    — default.  Picks ``fixed`` or ``planned`` per kernel
+                  based on language heuristics (Triton→planned,
+                  HIP→fixed); future iterations will let the controller
+                  select per-round.
+
+NOTE on translation: source→target language translation is NOT a
+``run_pipeline`` mode.  It is a **conditional preprocess phase**
+(``preprocess/phases/translation.py``, not yet implemented) that runs
+BEFORE the optimization loop when the user requests a target language
+different from the source.  Translation owns its own ``TranslationAgent``
+subagent (a standalone ``SubagentBase`` subclass with a verify-retry
+loop against golden tensors) and does not reuse ``OptimizationAgent``.
+After the phase completes, ``ctx.kernel_path`` and ``ctx.language`` are
+swapped to the translated kernel and the normal fixed/planned/auto
+pipeline continues.
 
 ``run_pipeline`` is responsible for resolving the tool set, composing the
 task body (via ``run/compose.py``), and dispatching to the shared pool
@@ -161,10 +170,14 @@ def run_pipeline(ctx: PipelineContext, mode: Mode):
     if mode == "fixed":
         return _run_fixed(ctx)
     if mode == "translate":
-        # Hook for the upcoming TranslationLoop.  Until PR-60 lands we
-        # surface a clear error rather than silently falling back.
-        raise NotImplementedError(
-            "mode='translate' is not wired through run_pipeline yet; use `geak translate` directly."
+        # Translation is a *preprocess phase*, not a run_pipeline mode.
+        # Reject early with a pointer to the correct entry point so
+        # callers migrate rather than silently fall back.
+        raise ValueError(
+            "mode='translate' is not a run_pipeline mode.  Translation runs as a "
+            "conditional preprocess phase (see preprocess/phases/translation.py) "
+            "before run_pipeline.  Use ``geak --target-language ...`` or "
+            "``geak translate`` at the CLI, not run_pipeline(..., mode='translate')."
         )
     raise ValueError(f"Unknown pipeline mode: {mode!r}")
 

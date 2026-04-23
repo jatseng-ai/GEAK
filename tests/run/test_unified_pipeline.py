@@ -71,10 +71,29 @@ def test_pipeline_unknown_mode_raises():
         run_pipeline(ctx, mode="nonsense")  # type: ignore[arg-type]
 
 
-def test_pipeline_translate_mode_not_implemented():
+def test_pipeline_rejects_translate_mode():
+    """Translation is a preprocess phase, not a run_pipeline mode.
+
+    ``run_pipeline(mode="translate")`` MUST raise ValueError with a
+    pointer to the correct entry point.  If someone ever resurrects
+    translate as a mode, this test catches the regression.
+    """
     ctx = _make_ctx()
-    with pytest.raises(NotImplementedError, match="translate"):
-        run_pipeline(ctx, mode="translate")
+    with pytest.raises(ValueError, match="not a run_pipeline mode"):
+        run_pipeline(ctx, mode="translate")  # type: ignore[arg-type]
+
+
+def test_pipeline_translate_mode_error_points_to_preprocess_phase():
+    """The rejection message must tell callers where translation actually lives."""
+    ctx = _make_ctx()
+    with pytest.raises(ValueError) as excinfo:
+        run_pipeline(ctx, mode="translate")  # type: ignore[arg-type]
+    msg = str(excinfo.value)
+    # The error message is the architectural signpost — assert it says
+    # translation is a preprocess phase + points at the file that will
+    # host it.
+    assert "preprocess phase" in msg
+    assert "preprocess/phases/translation.py" in msg
 
 
 def test_pipeline_fixed_composes_body_and_delegates():

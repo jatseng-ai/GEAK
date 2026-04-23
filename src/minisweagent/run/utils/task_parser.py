@@ -36,6 +36,7 @@ _EMPTY_PIPELINE_PARAMS: dict = {
     "max_rounds": None,
     "start_round": None,
     "pipeline_intent": False,
+    "target_language": None,
 }
 
 
@@ -150,11 +151,17 @@ def _normalize_parsed_task_info(parsed: dict) -> dict:
     return result
 
 
-_VALID_MODES: frozenset[str] = frozenset({"fixed", "planned", "auto", "translate"})
+_VALID_MODES: frozenset[str] = frozenset({"fixed", "planned", "auto"})
 
 
 def _normalize_mode_field(raw: object) -> str | None:
-    """Map raw LLM output (bool legacy ``heterogeneous`` or new ``mode`` str) to canonical mode string."""
+    """Map raw LLM output (bool legacy ``heterogeneous`` or new ``mode`` str) to canonical mode string.
+
+    ``translate`` is deliberately rejected here: translation is a separate
+    preprocess phase driven by the ``target_language`` field, not a
+    pipeline mode.  If an older prompt still emits ``mode="translate"``
+    we log and drop it (the translate signal comes from target_language).
+    """
     if raw is None:
         return None
     # Legacy boolean: True -> planned, False -> fixed.
@@ -169,7 +176,31 @@ def _normalize_mode_field(raw: object) -> str | None:
             return "planned"
         if canon == "homogeneous":
             return "fixed"
+        if canon == "translate":
+            logger.info(
+                "parse_pipeline_params: dropping legacy mode='translate'; "
+                "translation is a preprocess phase (see target_language field)."
+            )
+            return None
         logger.debug("parse_pipeline_params: ignoring unknown mode value %r", raw)
+    return None
+
+
+def _normalize_target_language(raw: object) -> str | None:
+    """Canonicalize ``target_language`` extraction output."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return None
+    canon = raw.strip().lower()
+    if not canon:
+        return None
+    # Accept a small whitelist for now; the kernel_language registry
+    # will take over validation once the translation phase lands.
+    _KNOWN = {"triton", "hip", "cuda", "rocm"}
+    if canon in _KNOWN:
+        return canon
+    logger.debug("parse_pipeline_params: ignoring unknown target_language %r", raw)
     return None
 
 
@@ -188,6 +219,7 @@ def _normalize_pipeline_params_from_parsed(parsed: dict) -> dict:
         "max_rounds": parsed.get("max_rounds"),
         "start_round": parsed.get("start_round"),
         "pipeline_intent": bool(parsed.get("pipeline_intent", False)),
+        "target_language": _normalize_target_language(parsed.get("target_language")),
     }
 
     if result["kernel_url"]:
@@ -274,11 +306,16 @@ def parse_pipeline_params(task_content: str, model) -> dict:
     Extracts:
     - kernel_url: Path or URL to the specific kernel file to optimize
     - preprocess_dir: Path to existing preprocessing artifacts
-    - mode: Execution mode (fixed | planned | auto | translate).  Legacy
-      boolean ``heterogeneous`` is accepted and translated to planned/fixed.
+    - mode: Execution mode (fixed | planned | auto).  Legacy boolean
+      ``heterogeneous`` is accepted and translated to planned/fixed.
+      ``translate`` is deliberately NOT a valid mode here — translation
+      is a preprocess phase signalled by ``target_language``.
     - max_rounds: Maximum optimization rounds
     - start_round: Round to resume from
     - pipeline_intent: Whether the task describes kernel optimization work
+    - target_language: Target kernel language if the user asks to
+      translate/port the kernel (triggers a preprocess translation phase
+      before optimization).  ``None`` when no translation is requested.
 
     Returns dict with extracted values (None if not found).
     """
