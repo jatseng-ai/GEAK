@@ -1,7 +1,14 @@
 """Memory subagents — per-round runtime subagents for cross-session memory.
 
-Populated by PR-3:
-- CrossSessionMemoryAnalysisAgent — reads top-k KB entries + current kernel,
-  writes structured `cross_session_memory_insights.md` (gated by
-  GEAK_USE_CROSS_SESSION_MEMORY).
+Current members:
+
+  - ``CrossSessionMemoryAnalysisAgent`` — per-round synthesis of top-k
+    retrieved KB entries into ``cross_session_memory_insights.md``.
+    Gated by ``GEAK_USE_CROSS_SESSION_MEMORY=1`` (default).
 """
+
+from minisweagent.subagents.memory.cross_session_memory_analysis import (
+    CrossSessionMemoryAnalysisAgent,
+)
+
+__all__ = ["CrossSessionMemoryAnalysisAgent"]
