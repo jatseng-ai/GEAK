@@ -1,7 +1,8 @@
 """Triton KernelLanguage instance.
 
-Registered at import time. Prompt/template paths point to files in this folder
-(some land later as content is migrated from the legacy locations).
+Registered at import time.  Prompt / template paths resolve to files
+under this folder when they exist; ``None`` otherwise so the base
+class's lazy-load helpers return ``""`` without raising.
 """
 
 from __future__ import annotations
@@ -12,6 +13,14 @@ from minisweagent.kernel_languages import registry
 from minisweagent.kernel_languages.base import KernelLanguage
 
 _DIR = Path(__file__).parent
+_TRANSLATION_DIR = _DIR.parent / "_translation"
+
+
+def _p(name: str) -> Path | None:
+    """Return ``_DIR / name`` if the file exists, else ``None``."""
+    candidate = _DIR / name
+    return candidate if candidate.exists() else None
+
 
 TRITON = KernelLanguage(
     name="triton",
@@ -24,14 +33,22 @@ TRITON = KernelLanguage(
         r"\btl\.store\s*\(",
     ),
     kb_namespace="triton",
-    # Paths that land later. None = "not yet populated"; the base class helpers
-    # gracefully return "" from the corresponding property accessors.
-    system_prompt_path=_DIR / "system_prompt.md" if (_DIR / "system_prompt.md").exists() else None,
-    optimization_prompt_path=_DIR / "optimization_prompt.md" if (_DIR / "optimization_prompt.md").exists() else None,
-    planner_strategy_hints_path=_DIR / "planner_strategy_hints.md" if (_DIR / "planner_strategy_hints.md").exists() else None,
-    harness_template_path=_DIR / "harness.j2" if (_DIR / "harness.j2").exists() else None,
-    commandment_template_path=_DIR / "commandment.j2" if (_DIR / "commandment.j2").exists() else None,
-    tool_set=frozenset(),   # populated in PR-3; empty = use tools_runtime defaults
+    # Prompts & templates
+    system_prompt_path=_p("system_prompt.md"),
+    orchestrator_system_prompt_path=_p("orchestrator_system_prompt.md"),
+    optimization_prompt_path=_p("optimization_prompt.md"),
+    planner_strategy_hints_path=_p("planner_strategy_hints.md"),
+    optimizer_hints_path=_p("optimizer_hints.md"),
+    builder_hints_path=_p("builder_hints.md"),
+    memory_hints_path=_p("memory_hints.md"),
+    idioms_path=_p("idioms.md"),
+    harness_template_path=_p("harness.j2"),
+    commandment_template_path=_p("commandment.j2"),
+    # Translation hint packs live at kernel_languages/_translation/ (shared
+    # across languages so pair-specific packs like triton_to_hip.md sit
+    # next to each other and can be edited together).
+    translation_hints_dir=_TRANSLATION_DIR if _TRANSLATION_DIR.exists() else None,
+    tool_set=frozenset(),  # populated in PR-3; empty = use tools_runtime defaults
 )
 
 registry.register(TRITON)

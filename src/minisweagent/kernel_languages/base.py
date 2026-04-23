@@ -66,9 +66,26 @@ class KernelLanguage:
     dataclass is frozen we require callers to set it explicitly."""
 
     # ─── prompt / template paths (lazy-loaded) ───
+    #
+    # Per plan §13.2-C row 19: the MAIN agent's ``system_prompt`` and the
+    # PLANNER orchestrator's system prompt are DIFFERENT concepts.  They
+    # live in separate files so nobody accidentally collapses them:
+    #
+    #   - ``system_prompt_path``               -> OptimizationAgent worker
+    #   - ``orchestrator_system_prompt_path``  -> planner LLM (hetero path)
+    #
+    # Both are markdown; both support {rag_tools_description} formatting.
+
     system_prompt_path: Path | None = None
-    """Path to the system prompt markdown (fed to OptimizationAgent's system
-    template). Replaces today's hardcoded SYSTEM_PROMPT in heterogeneous/prompts.py."""
+    """Path to the OptimizationAgent system-prompt markdown (the worker).
+    Fed into OptimizationAgent's system template.  Replaces today's
+    language-specific SYSTEM_PROMPT in heterogeneous/prompts.py."""
+
+    orchestrator_system_prompt_path: Path | None = None
+    """Path to the orchestrator (planner) system-prompt markdown.
+    Fed to the planned-mode orchestrator LLM.  Replaces today's
+    SYSTEM_PROMPT in heterogeneous/prompts.py for the orchestrator
+    role specifically."""
 
     optimization_prompt_path: Path | None = None
     """Path to the per-round task instruction template."""
@@ -76,6 +93,29 @@ class KernelLanguage:
     planner_strategy_hints_path: Path | None = None
     """Path to planner strategy hints (replaces today's TASKGEN_SYSTEM_PROMPT
     language-biased content in heterogeneous/prompts.py)."""
+
+    optimizer_hints_path: Path | None = None
+    """Path to optimizer-side strategy hints — concrete language-specific
+    patterns the worker agent may try (e.g. 'prefer tl.dot over nested
+    reduction loops' for Triton).  Consumed by ``compose_task_body``."""
+
+    builder_hints_path: Path | None = None
+    """Path to HarnessBuilder hints — language-specific idioms for
+    producing a universal-contract harness from user test files
+    (e.g. Triton's ``@triton.jit`` entry-point detection, HIP's
+    ``hipLaunchKernelGGL`` launcher wrapping).  Consumed by
+    ``subagents/preprocess/harness_builder.py``."""
+
+    memory_hints_path: Path | None = None
+    """Path to memory hints markdown — per-language key-parameter patterns
+    moved out of ``memory/cross_session/formatter.py::_PARAM_PATTERNS``
+    so the formatter can stay language-agnostic.  Consumed by the
+    formatter (future commit) and by CrossSessionMemoryAnalysisAgent."""
+
+    idioms_path: Path | None = None
+    """Path to free-form language idioms markdown.  Appended to
+    ``compose_task_body`` context when set.  Useful for 'what Triton
+    code looks like in this repo' style guidance."""
 
     harness_template_path: Path | None = None
     """Path to Jinja template for harness.py (consumed by HarnessBuilder
@@ -87,6 +127,12 @@ class KernelLanguage:
     pipeline. Per-language quirks (HIP's `make`, `rocprof`, Triton's `python3`,
     Metrix profiler calls) live ONLY here — there are deliberately no
     `test_runner_command` or `profiler_command` fields on this dataclass."""
+
+    translation_hints_dir: Path | None = None
+    """Directory containing translation hint packs for THIS language as
+    SOURCE.  ``TranslationAgent`` concatenates
+    ``<dir>/<src>_to_<tgt>.md`` when it exists, else falls back to
+    ``<dir>/_fallback.md``.  See plan §0.5(b) Translation phase."""
 
     # ─── tools (populated in PR-3) ───
     tool_set: FrozenSet[str] = frozenset()
@@ -113,6 +159,10 @@ class KernelLanguage:
         return self._load(self.system_prompt_path)
 
     @property
+    def orchestrator_system_prompt(self) -> str:
+        return self._load(self.orchestrator_system_prompt_path)
+
+    @property
     def optimization_prompt(self) -> str:
         return self._load(self.optimization_prompt_path)
 
@@ -121,12 +171,46 @@ class KernelLanguage:
         return self._load(self.planner_strategy_hints_path)
 
     @property
+    def optimizer_hints(self) -> str:
+        return self._load(self.optimizer_hints_path)
+
+    @property
+    def builder_hints(self) -> str:
+        return self._load(self.builder_hints_path)
+
+    @property
+    def memory_hints(self) -> str:
+        return self._load(self.memory_hints_path)
+
+    @property
+    def idioms(self) -> str:
+        return self._load(self.idioms_path)
+
+    @property
     def harness_template(self) -> str:
         return self._load(self.harness_template_path)
 
     @property
     def commandment_template(self) -> str:
         return self._load(self.commandment_template_path)
+
+    def translation_hints_for(self, target_language_name: str) -> str:
+        """Return the translation hint pack for source -> target, or fallback.
+
+        Looks up ``<translation_hints_dir>/<name>_to_<target>.md`` first;
+        if missing, falls back to ``<translation_hints_dir>/_fallback.md``.
+        Returns ``""`` when ``translation_hints_dir`` is unset or neither
+        file exists.
+        """
+        if self.translation_hints_dir is None:
+            return ""
+        pair_path = self.translation_hints_dir / f"{self.name}_to_{target_language_name}.md"
+        if pair_path.exists():
+            return pair_path.read_text(encoding="utf-8")
+        fallback = self.translation_hints_dir / "_fallback.md"
+        if fallback.exists():
+            return fallback.read_text(encoding="utf-8")
+        return ""
 
     def __repr__(self) -> str:
         return f"KernelLanguage(name={self.name!r}, kb_namespace={self.kb_namespace!r})"
