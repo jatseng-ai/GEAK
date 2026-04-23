@@ -69,6 +69,67 @@ def _normalize_command(command: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _clamp_gpu_devices_to_worker(
+    gpu_devices: str | list[str] | None,
+) -> str | list[str] | None:
+    """Clamp the LLM-supplied ``gpu_devices`` to the worker's own assigned GPU.
+
+    Motivation: when ``num_parallel > 1``, each worker runs with a specific
+    GPU slice (via ``HIP_VISIBLE_DEVICES`` or ``GEAK_GPU_DEVICE``).  Without
+    clamping, the LLM can and does hardcode a specific GPU ID (e.g. ``"4"``)
+    in ``profile_kernel`` tool calls — we observed 3 of 4 HIP workers in a
+    ``HIP_VISIBLE_DEVICES=4,5,6,7`` run all hardcoding ``"4"`` → rocprof
+    deadlocked on contended GPU 4 while parallels 5/6/7 sat idle.
+
+    Priority order (first non-empty wins):
+      1. ``GEAK_GPU_DEVICE`` env var (set by ParallelAgent per worker)
+      2. first entry of ``HIP_VISIBLE_DEVICES`` (canonical per-worker device)
+      3. Whatever the LLM passed (fallback — single-worker case or when
+         the caller explicitly wants a specific device)
+
+    Always returns a value matching the caller-visible GPU slice; never
+    propagates an LLM hallucination that points outside the slice.
+    """
+    worker_gpu: str | None = None
+    geak_gpu = os.environ.get("GEAK_GPU_DEVICE", "").strip()
+    if geak_gpu:
+        worker_gpu = geak_gpu
+    else:
+        hip_visible = os.environ.get("HIP_VISIBLE_DEVICES", "").strip()
+        if hip_visible:
+            # Take the first GPU from the visible slice (the worker's own)
+            worker_gpu = hip_visible.split(",")[0].strip()
+
+    if not worker_gpu:
+        # No worker-slice information available — respect the LLM's choice.
+        return gpu_devices
+
+    # Normalize LLM-supplied value for logging (list-style "[4]" should
+    # match string-style "4").
+    def _first(val: str | list[str] | None) -> str | None:
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return val.strip() or None
+        if isinstance(val, list) and val:
+            return str(val[0]).strip() or None
+        return None
+
+    llm_gpu = _first(gpu_devices)
+    if llm_gpu and llm_gpu != worker_gpu:
+        logger.warning(
+            "Profiler MCP: overriding LLM-supplied gpu_devices=%r "
+            "with worker-assigned GPU %r (GEAK_GPU_DEVICE=%r, "
+            "HIP_VISIBLE_DEVICES=%r)",
+            gpu_devices,
+            worker_gpu,
+            geak_gpu or "<unset>",
+            os.environ.get("HIP_VISIBLE_DEVICES", "<unset>"),
+        )
+
+    return worker_gpu
+
+
 def _profile_with_metrix(
     command: str,
     num_replays: int = 3,
@@ -246,6 +307,13 @@ def profile_kernel(
     logger.info("Profiler MCP: backend=%s, command=%s", backend, command)
 
     command = _normalize_command(command)
+
+    # Clamp gpu_devices to the worker's own GPU slice before doing any
+    # profiling work.  LLMs have been observed hardcoding specific GPU
+    # IDs in tool calls (``gpu_devices="4"``); if the caller is a worker
+    # assigned to a different GPU, that would serialize all workers on
+    # one GPU.  See ``_clamp_gpu_devices_to_worker`` docstring.
+    gpu_devices = _clamp_gpu_devices_to_worker(gpu_devices)
 
     _warmup(command, warmup_runs)
 
