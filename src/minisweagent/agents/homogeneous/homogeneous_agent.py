@@ -23,10 +23,25 @@ logger = logging.getLogger(__name__)
 
 
 def parse_gpu_ids(gpu_ids_str: str | None) -> list[int]:
-    """Parse comma-separated GPU IDs string to list of integers."""
-    if not gpu_ids_str:
-        return [0]
-    return [int(x.strip()) for x in gpu_ids_str.split(",") if x.strip()]
+    """Parse a gpu_ids spec into a list of ints.
+
+    Accepts multiple human-friendly forms, all seen in the wild from
+    both the LLM-extracted task config AND explicit ``--gpu-ids`` CLI:
+
+      - ``"4,5,6,7"``      — comma-separated list
+      - ``"4-7"``           — range (inclusive)
+      - ``"0,1,4-7"``       — mixed
+      - ``"4"``             — single GPU
+      - ``None`` / ``""``   — defaults to ``[0]``
+
+    Delegates to ``run/utils/config_editor._parse_gpu_ids_string`` for
+    the parse; that same helper is the source of truth for
+    ``num_parallel = len(gpu_ids)`` auto-derivation in apply_config_changes.
+    """
+    from minisweagent.run.utils.config_editor import _parse_gpu_ids_string
+
+    result = _parse_gpu_ids_string(gpu_ids_str)
+    return result if result else [0]
 
 
 def run_homogeneous_agent(
