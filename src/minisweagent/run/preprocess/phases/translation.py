@@ -241,6 +241,32 @@ class TranslationPhase(Phase):
         source_code = src_path.read_text(encoding="utf-8")
         source_lang = source or "unknown"
 
+        # ── D4: Golden-tensor prep (source-side validation) ─────────
+        #
+        # Diagram step (a): "run source harness → golden tensors".
+        # Full tensor-allclose verification needs a harness protocol
+        # extension (tensor-dump mode) that doesn't exist today, so
+        # we implement the PRACTICAL subset:
+        #
+        #   1. If ctx.harness is set, run the source harness in
+        #      ``--correctness`` mode against the source kernel.
+        #      This catches the biggest failure mode — translating
+        #      a source that doesn't even pass its own correctness
+        #      gate.  If source-side correctness fails, we bail
+        #      before wasting LLM attempts.
+        #
+        #   2. Callers who DO need full tensor-allclose verification
+        #      can pass ``verify_fn`` via loop() kwargs; our default
+        #      ``_build_verify_fn`` still does Layer 1 (structural)
+        #      + Layer 2 (syntactic) regardless.
+        source_correctness_ok = self._validate_source_correctness(ctx, src_path)
+        if source_correctness_ok is False:
+            raise RuntimeError(
+                "TranslationPhase: source kernel fails its own --correctness "
+                "gate; translation aborted (would produce a guaranteed-broken "
+                f"target).  See ctx.correctness for details (source: {src_path})."
+            )
+
         agent = self._build_agent(target)
         verify_fn = self._build_verify_fn(
             ctx=ctx,
@@ -353,6 +379,104 @@ class TranslationPhase(Phase):
             return src_lang.translation_hints_for(target)
         except Exception:
             return ""
+
+    # ── D4: golden-tensor helpers ────────────────────────────────────
+
+    @staticmethod
+    def _validate_source_correctness(
+        ctx: PhaseContext,
+        src_path: Path,
+    ) -> bool | None:
+        """Run the source harness in ``--correctness`` mode, pre-translation.
+
+        Returns:
+            ``True``  — source passes correctness.  Translation proceeds.
+            ``False`` — source FAILS correctness.  Translation is
+                         aborted (caller raises).
+            ``None``  — no harness available OR subprocess infrastructure
+                         unavailable; skip gracefully and let Layer 1+2
+                         verification do its job.
+
+        Behaviour rationale: ``python3 <harness> --correctness`` is the
+        universal contract's cheapest mode.  It either exits 0 (OK) or
+        1 (FAIL).  We treat any other outcome (timeout, import error,
+        non-existent harness) as "skip" rather than False, so broken
+        test infrastructure doesn't mask real translation issues.
+        """
+        harness = getattr(ctx, "harness", None) or getattr(ctx, "harness_path", None)
+        if not harness:
+            logger.debug(
+                "  D4 source-correctness: no ctx.harness/harness_path; skipping."
+            )
+            return None
+
+        harness_path = Path(harness)
+        if not harness_path.is_file():
+            logger.debug(
+                "  D4 source-correctness: harness file missing (%s); skipping.",
+                harness_path,
+            )
+            return None
+
+        import shlex
+        import subprocess
+        import sys
+
+        cmd = (
+            f"{shlex.quote(sys.executable)} "
+            f"{shlex.quote(str(harness_path.resolve()))} --correctness"
+        )
+        repo_root = getattr(ctx, "repo_root", None)
+        cwd = str(Path(repo_root).resolve()) if repo_root else None
+
+        logger.info(
+            "  D4 source-correctness: running %s (cwd=%s)",
+            cmd,
+            cwd or "<caller>",
+        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=cwd,
+                timeout=getattr(ctx, "benchmark_timeout", 3600),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning(
+                "[yellow]  D4 source-correctness: subprocess failed (%s); "
+                "skipping (translation will proceed without golden signal).[/yellow]",
+                exc,
+            )
+            return None
+
+        rc = proc.returncode
+        if rc == 0 and "OK" in (proc.stdout or ""):
+            logger.info(
+                "  D4 source-correctness: PASS (exit=%d, stdout tail: %s)",
+                rc,
+                (proc.stdout or "").strip().splitlines()[-1][:160] if proc.stdout else "",
+            )
+            return True
+
+        if rc != 0 and ("FAIL" in (proc.stdout or "") or "FAIL" in (proc.stderr or "")):
+            logger.warning(
+                "[yellow]  D4 source-correctness: FAIL (exit=%d) — source kernel "
+                "does not pass its own --correctness gate.  Aborting translation.[/yellow]",
+                rc,
+            )
+            return False
+
+        # Neither OK nor FAIL — treat as "skip" rather than False to
+        # avoid masking real translation issues with test-infra issues.
+        logger.warning(
+            "[yellow]  D4 source-correctness: INDETERMINATE (exit=%d); "
+            "skipping (translation will proceed without golden signal).[/yellow]",
+            rc,
+        )
+        return None
 
     def _build_verify_fn(
         self,
