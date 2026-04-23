@@ -71,6 +71,23 @@ class ComposeInputs:
 
 
 _MEMORY_SECTION_HEADER = "\n\n### Optimization Memory (from past kernel optimization runs)\n"
+_ANALYSIS_SECTION_HEADER = "\n\n### Kernel Analysis (produced by KernelAnalysisAgent)\n"
+
+
+def _inject_kernel_analysis(user_prompt: str, preprocess_ctx: dict[str, Any]) -> tuple[str, int]:
+    """Prepend the [A]-[D] rubric markdown to the task body when available.
+
+    ``preprocess_ctx["kernel_analysis_md"]`` is populated by
+    ``ExplorePhase`` via ``KernelAnalysisAgent``.  When absent / empty
+    (no language detected, no model available, subagent failed —
+    all best-effort paths), the original prompt is returned unchanged.
+
+    Returns ``(augmented_prompt, chars_injected)``.
+    """
+    rubric = preprocess_ctx.get("kernel_analysis_md")
+    if not rubric or not isinstance(rubric, str) or not rubric.strip():
+        return user_prompt, 0
+    return user_prompt + _ANALYSIS_SECTION_HEADER + rubric.strip() + "\n", len(rubric)
 
 
 def _inject_memory(user_prompt: str, preprocess_ctx: dict[str, Any]) -> tuple[str, int]:
@@ -120,16 +137,31 @@ def compose_task_body(inputs: ComposeInputs) -> str:
       1. Mode-specific framing (currently identical across modes — the
          ``mode`` parameter exists so future modes can branch without
          callers changing shape).
-      2. Cross-session memory injection (enabled for every mode that
+      2. **Kernel analysis rubric** ([A]-[D] from KernelAnalysisAgent,
+         when ``preprocess_ctx['kernel_analysis_md']`` is populated).
+         Injected BEFORE memory so the rubric sets the optimization
+         framing before any KB evidence lands.
+      3. Cross-session memory injection (enabled for every mode that
          optimizes; retrieval itself is gated by
          ``GEAK_USE_CROSS_SESSION_MEMORY``).
-      3. Extra addenda from the caller (e.g. the hetero orchestrator's
+      4. Extra addenda from the caller (e.g. the hetero orchestrator's
          user-constraints / directives block).
     """
     body = inputs.user_prompt
-    body, injected = _inject_memory(body, inputs.preprocess_ctx)
-    if injected:
-        logger.info("compose_task_body: injected %d chars of cross-session memory", injected)
+
+    body, analysis_chars = _inject_kernel_analysis(body, inputs.preprocess_ctx)
+    if analysis_chars:
+        logger.info(
+            "compose_task_body: injected %d chars of kernel analysis rubric",
+            analysis_chars,
+        )
+
+    body, memory_chars = _inject_memory(body, inputs.preprocess_ctx)
+    if memory_chars:
+        logger.info(
+            "compose_task_body: injected %d chars of cross-session memory",
+            memory_chars,
+        )
 
     for extra in inputs.extra_addenda:
         if extra and extra.strip():

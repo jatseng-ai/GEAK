@@ -75,19 +75,14 @@ class TestSubagentNotImplementedMessages:
     on these messages being actionable.
 
     Implemented subagents (behavioural tests live elsewhere):
-      - TranslationAgent                 -> ``test_translation_agent.py``
-      - HarnessBuilder                   -> ``test_harness_builder.py``
+      - TranslationAgent      -> ``test_translation_agent.py``
+      - HarnessBuilder        -> ``test_harness_builder.py``
+      - KernelAnalysisAgent   -> ``test_kernel_analysis_agent.py``
 
-    Still skeletons (pending D2 / D3):
-      - KernelAnalysisAgent              -> planned for Workstream D2
-      - CrossSessionMemoryAnalysisAgent  -> planned for Workstream D3 (KB work
-                                             deferred per §13.4)
+    Still skeletons (per plan §13.4 — KB work deferred until end-to-end
+    pipeline lands):
+      - CrossSessionMemoryAnalysisAgent  -> planned for Workstream D3
     """
-
-    def test_kernel_analysis_points_to_commandment(self) -> None:
-        with pytest.raises(NotImplementedError) as e:
-            KernelAnalysisAgent.__dict__["run"](_FakeSubagent())
-        assert "generate_commandment" in str(e.value)
 
     def test_memory_analysis_points_to_assemble(self) -> None:
         with pytest.raises(NotImplementedError) as e:

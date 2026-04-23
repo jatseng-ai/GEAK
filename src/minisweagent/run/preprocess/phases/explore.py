@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from minisweagent.run.preprocess.phases.base import Phase, PhaseContext
 
@@ -225,7 +226,127 @@ class ExplorePhase(Phase):
             except Exception as exc:
                 logger.warning("[yellow]validate_commandment: %s[/yellow]", exc)
 
+        # ── Kernel analysis rubric (D2) ─────────────────────────────
+        #
+        # Best-effort [A]-[D] rubric produced by KernelAnalysisAgent
+        # and written to ``{output_dir}/kernel_analysis.md``.  When
+        # populated, ``ctx.kernel_analysis_md`` is prepended to every
+        # task body by ``compose_task_body`` so both fixed and planned
+        # modes see the same structured analysis.  Missing language
+        # or model -> silent skip (advisory context, not a hard
+        # requirement).
+        _try_kernel_analysis(ctx, output_dir=output_dir)
+
         ctx.phases_run.append(self.name)
+
+
+def _try_kernel_analysis(ctx: PhaseContext, *, output_dir: Path) -> None:
+    """Produce the [A]-[D] rubric via KernelAnalysisAgent (D2).
+
+    Silently skips when:
+      - ``ctx.language`` is None (DiscoveryPhase did not resolve a
+        KernelLanguage — nothing to feed the subagent with).
+      - No model is available (``ctx.model`` unset AND no model
+        factory).
+      - ``ctx.kernel_path`` is missing.
+      - The subagent raises for any reason (analysis is advisory).
+
+    When it succeeds, sets ``ctx.kernel_analysis_md`` to the rendered
+    markdown string (so ``compose_task_body`` can inject it without
+    re-reading from disk).
+    """
+    if ctx.language is None:
+        logger.debug("  KernelAnalysisAgent: ctx.language is None; skipping rubric.")
+        return
+    if not ctx.kernel_path or not Path(ctx.kernel_path).is_file():
+        logger.debug("  KernelAnalysisAgent: no kernel_path; skipping rubric.")
+        return
+
+    model = _resolve_model(ctx)
+    if model is None:
+        logger.debug("  KernelAnalysisAgent: no model available; skipping rubric.")
+        return
+
+    try:
+        from minisweagent.subagents.base import SubagentConfig
+        from minisweagent.subagents.preprocess.kernel_analysis import (
+            KernelAnalysisAgent,
+        )
+    except Exception as exc:
+        logger.warning("[yellow]KernelAnalysisAgent import failed: %s[/yellow]", exc)
+        return
+
+    out_path = output_dir / "kernel_analysis.md"
+    config = SubagentConfig(
+        name="kernel_analysis",
+        model_name=getattr(model, "name", "kernel_analysis_model"),
+        system_template="",
+        instance_template="",
+        step_limit=1,
+        cost_limit=3.0,
+        temperature=0.2,
+        extra={"max_retries": 1},
+    )
+    agent = KernelAnalysisAgent(language=ctx.language, config=config)
+    agent.model = model  # type: ignore[attr-defined]
+
+    try:
+        result = agent.run(
+            kernel_path=Path(ctx.kernel_path),
+            out_path=out_path,
+            profile=ctx.profiling,
+            baseline_metrics=ctx.baseline_metrics,
+            codebase_context_path=(
+                Path(ctx.codebase_context_path)
+                if ctx.codebase_context_path
+                else None
+            ),
+            max_retries=int(config.extra.get("max_retries", 1)),
+        )
+    except Exception as exc:  # noqa: BLE001 — shield the phase
+        logger.warning(
+            "[yellow]KernelAnalysisAgent raised %s: %s; skipping rubric.[/yellow]",
+            type(exc).__name__,
+            exc,
+        )
+        return
+
+    if not isinstance(result, dict):
+        return
+
+    analysis_path = result.get("analysis_path")
+    if not analysis_path:
+        return
+
+    # Read the written markdown back so ctx.kernel_analysis_md carries
+    # the rubric string (compose_task_body consumes this directly, no
+    # disk-read needed).
+    try:
+        ctx.kernel_analysis_md = Path(analysis_path).read_text(encoding="utf-8")
+    except Exception:
+        ctx.kernel_analysis_md = None
+        return
+
+    logger.info(
+        "  KernelAnalysisAgent produced rubric: %s (ok=%s, attempts=%s)",
+        analysis_path,
+        result.get("ok"),
+        result.get("attempts_used"),
+    )
+
+
+def _resolve_model(ctx: PhaseContext) -> Any:
+    """Return a model instance, constructing one from the factory if needed."""
+    if ctx.model is not None:
+        return ctx.model
+    factory = getattr(ctx, "model_factory", None)
+    if callable(factory):
+        try:
+            return factory()
+        except Exception as exc:
+            logger.debug("model_factory raised %s: %s", type(exc).__name__, exc)
+            return None
+    return None
 
 
 __all__ = ["ExplorePhase"]
