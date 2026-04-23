@@ -17,6 +17,7 @@ from rich.console import Console
 from minisweagent.agents.parallel_agent import BestPatchResult, ParallelAgent
 from minisweagent.agents.optimization_agent import OptimizationAgent
 from minisweagent.models import get_model
+from minisweagent.run.pool_runner import build_homogeneous_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -134,14 +135,28 @@ def run_homogeneous_agent(
     logger.info("  repo=%s, output_dir=%s", final_repo, final_output_dir)
     logger.info("[dim]Sub-agents are working — expect no output for several minutes.[/dim]")
 
-    # Create and run ParallelAgent
+    # Build an identical-copies AgentTask list so every homogeneous run
+    # flows through the shared run_pool scheduler instead of ParallelAgent's
+    # inline identical-copies branch.  This unifies the homo and hetero
+    # execution paths at the pool boundary.
+    task_body_with_wt = task_content + "\n\n" + "The current worktree is: " + str(final_repo)
+    homo_tasks = build_homogeneous_tasks(
+        num_parallel=final_num_parallel,
+        agent_class=base_agent_class,
+        task_body=task_body_with_wt,
+        base_label="parallel",
+    )
+    # ParallelAgentConfig carries ``tasks`` alongside ``agent_class`` — when
+    # ``tasks`` is set, ParallelAgent.run_parallel skips the inline homo
+    # branch and calls run_pool directly.
+    agent_config["tasks"] = homo_tasks
+
     agent = ParallelAgent(model, env, **agent_config)
 
     try:
-        task_content = task_content + "\n\n" + "The current worktree is: " + str(final_repo)
         _t0 = time.monotonic()
         best_result = agent.run(
-            task_content,
+            task_body_with_wt,
             console=console,
             model_factory=lambda: get_model(model_name, model_config.copy()),
             env_factory=lambda: env_class(**copy.deepcopy(env_kwargs)),
