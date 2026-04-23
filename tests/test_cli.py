@@ -142,6 +142,60 @@ def test_typer_app_exposed() -> None:
     assert hasattr(mini_module.app, "registered_commands") or hasattr(mini_module.app, "info_name")
 
 
+class TestTranslateSubcommand:
+    """Verify ``geak translate`` is registered and wires through to the
+    TranslationPhase.  We stub the agent's model to keep the test
+    offline.
+    """
+
+    def test_translate_subcommand_registered(self) -> None:
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(mini_module.app, ["translate", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--source" in result.output
+        assert "--target-language" in result.output
+
+    def test_translate_runs_phase_with_mocked_agent(self, tmp_path: Path) -> None:
+        """Integration-light test: mock the TranslationAgent.loop so no
+        real model is invoked; verify the phase swap + output file
+        write + exit code."""
+        import yaml as _yaml
+        from typer.testing import CliRunner
+
+        from minisweagent.subagents.translation import TranslationAgent
+        from minisweagent.subagents.translation.translator import TranslationResult
+
+        src = tmp_path / "kernel.py"
+        src.write_text("def kernel(): pass")
+
+        fake_result = TranslationResult(
+            ok=True,
+            candidate_code="__global__ void kernel() {}",
+            attempts_used=1,
+        )
+
+        # Patch the config-load side effects so we don't need real config files.
+        with patch.object(TranslationAgent, "loop", return_value=fake_result), patch(
+            "minisweagent.cli.yaml.safe_load",
+            return_value={"model": {}},
+        ), patch("minisweagent.models.get_model", return_value=object()), patch(
+            "minisweagent.cli.configure_if_first_time"
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                mini_module.app,
+                ["translate", "--source", str(src), "--target-language", "hip"],
+            )
+        assert result.exit_code == 0, result.output
+        # The translated file should exist next to the source with a .hip suffix
+        translated = src.with_suffix(".hip")
+        assert translated.exists()
+        assert translated.read_text() == "__global__ void kernel() {}"
+        del _yaml  # silence linter about unused import
+
+
 class TestTargetLanguageFlag:
     """Verify the --target-language flag is registered on the geak CLI.
 

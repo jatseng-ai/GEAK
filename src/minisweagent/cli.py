@@ -668,5 +668,98 @@ def main(
     return result_or_report
 
 
+# ──────────────────────────────────────────────────────────────────────
+# ``geak translate`` — standalone kernel language porting
+# ──────────────────────────────────────────────────────────────────────
+#
+# Unlike ``geak -t "<prompt>" --target-language Y`` (which translates
+# AND optimizes in-place), ``geak translate`` runs the translation
+# preprocess phase only and exits.  Useful when the user wants the
+# translated kernel as a deliverable without the full optimization
+# loop.
+
+
+_TRANSLATE_HELP = """Translate a kernel from one language to another.
+
+Runs only the translation preprocess phase (``TranslationAgent``) and
+exits.  The translated kernel is written next to the source file with
+the target language's extension.
+
+Examples:
+
+  geak translate --source kernel.py --target-language hip
+  geak translate --source kernel.hip --target-language triton --output kernel_triton.py
+"""
+
+
+@app.command(name="translate", help=_TRANSLATE_HELP)
+def translate(
+    source: Path = typer.Option(..., "--source", "-s", help="Source kernel file (local path)."),
+    target_language: str = typer.Option(..., "--target-language", "-t", help="Target kernel language (e.g. triton, hip, cuda)."),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Output path for the translated kernel.  Defaults to ``source.stem + target_suffix`` next to the source."),
+    model_name: str | None = typer.Option(None, "-m", "--model", help="Model to use for translation."),
+    max_attempts: int = typer.Option(3, "--max-attempts", help="Maximum verify-retry attempts before failing."),
+):
+    """Run the translation preprocess phase standalone."""
+    configure_if_first_time()
+
+    from minisweagent.models import get_model
+    from minisweagent.run.preprocess.phases.base import PhaseContext
+    from minisweagent.run.preprocess.phases.translation import TranslationPhase
+
+    if not source.exists() or not source.is_file():
+        console.print(f"[bold red]Error:[/bold red] source file not found: {source}")
+        raise typer.Exit(1)
+
+    # Load config for the model (same pattern as main()).
+    base_config_path = builtin_config_dir / "mini_kernel_strategy_list.yaml"
+    base_config = yaml.safe_load(base_config_path.read_text(encoding="utf-8")) or {}
+    config_path = builtin_config_dir / "geak.yaml"
+    user_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config = _deep_merge(base_config, user_config)
+
+    model = get_model(model_name, config.get("model", {}))
+    logger.info(
+        "[bold cyan]geak translate[/bold cyan] source=%s -> target_language=%s (max_attempts=%d)",
+        source,
+        target_language,
+        max_attempts,
+    )
+
+    ctx = PhaseContext(
+        kernel_url=str(source.resolve()),
+        output_dir=source.parent.resolve(),
+        target_language=target_language.strip().lower(),
+        translate_only=True,
+        model=model,
+    )
+
+    phase = TranslationPhase()
+    # Pass the model through to the agent builder.
+    phase._injected_model = model  # type: ignore[attr-defined]
+
+    try:
+        phase.run(ctx)
+    except FileNotFoundError as exc:
+        console.print(f"[bold red]Translation failed:[/bold red] {exc}")
+        raise typer.Exit(1)
+    except RuntimeError as exc:
+        console.print(f"[bold red]Translation failed:[/bold red] {exc}")
+        raise typer.Exit(2)
+
+    translated_path = Path(ctx.kernel_path)
+    if output is not None:
+        # Caller requested a specific output path
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(translated_path.read_bytes())
+        translated_path = output
+
+    console.print(
+        f"[bold green]Translation complete.[/bold green] "
+        f"Translated kernel: [cyan]{translated_path}[/cyan]"
+    )
+    logger.info("geak translate: wrote translated kernel to %s", translated_path)
+
+
 if __name__ == "__main__":
     app()
