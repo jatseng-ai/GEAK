@@ -3,7 +3,8 @@
 Inputs  (read from ctx):
   - kernel_path, harness_path, repo_root
   - test_command, eval_command, correctness_command, performance_command
-  - discovery  (to infer kernel language)
+  - discovery  (to infer kernel language when ``ctx.language`` unset)
+  - language   (optional ``KernelLanguage`` populated by DiscoveryPhase)
   - baseline_metrics, profiling, codebase_context_path  (future: feed
     ``KernelAnalysisAgent``)
 
@@ -12,10 +13,18 @@ Outputs (written to ctx):
   - commandment_path      (str path to COMMANDMENT.md)
   - kernel_analysis_md    (future — populated by KernelAnalysisAgent)
 
-Absorbs step 7 of the legacy monolith.  Future commit will replace the
-``commandment.py`` 530-LoC Python branching with a language-driven
-Jinja template + ``validate_commandment`` contract.  Until then this
-phase delegates to the existing generator.
+Render path selection (plan §13.2-E row 26):
+
+  1. **Jinja (preferred)** — if ``ctx.language.commandment_template_path``
+     is set, render via Jinja.  The template receives all the same
+     variables the legacy Python generator consumed plus the full
+     ``ctx`` object for extensibility.
+  2. **Legacy fallback** — if the KernelLanguage has no Jinja
+     template OR Jinja rendering fails, fall back to the legacy
+     ``run/preprocess/commandment.py`` functions.
+
+Both paths write ``{output_dir}/COMMANDMENT.md`` and run the universal
+``validate_commandment`` contract on the output before returning.
 """
 
 from __future__ import annotations
@@ -36,20 +45,74 @@ def _join_cmd(cmd: str | list[str] | None) -> str | None:
     return cmd.strip() or None
 
 
+def _try_jinja_render(
+    *,
+    ctx: PhaseContext,
+    correctness_cmd: str | None,
+    perf_cmd: str | None,
+    compile_cmd: str | None,
+    harness_path: str | None,
+    inner_kernel: bool,
+    profile_replays: int,
+) -> str | None:
+    """Render the per-language Jinja commandment template if available.
+
+    Returns:
+        Rendered markdown string on success.
+        ``None`` when the language has no template OR rendering fails
+        (caller then falls back to legacy path).
+    """
+    language = ctx.language
+    if language is None or language.commandment_template_path is None:
+        return None
+
+    try:
+        from jinja2 import Environment, FileSystemLoader, StrictUndefined
+    except ImportError:
+        logger.debug("jinja2 not installed; falling back to legacy commandment.py")
+        return None
+
+    template_path = Path(language.commandment_template_path)
+    if not template_path.exists():
+        return None
+
+    env = Environment(
+        loader=FileSystemLoader(str(template_path.parent)),
+        keep_trailing_newline=True,
+        undefined=StrictUndefined,  # catch template variable typos at render time
+    )
+    try:
+        tmpl = env.get_template(template_path.name)
+        return tmpl.render(
+            kernel_path=ctx.kernel_path,
+            harness_path=harness_path or "",
+            repo_root=ctx.repo_root,
+            inner_kernel=inner_kernel,
+            profile_replays=profile_replays,
+            correctness_command=correctness_cmd,
+            performance_command=perf_cmd,
+            compile_command=compile_cmd,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[yellow]Jinja commandment render failed for language=%s: %s; "
+            "falling back to legacy commandment.py[/yellow]",
+            getattr(language, "name", "?"),
+            exc,
+        )
+        return None
+
+
 class ExplorePhase(Phase):
     """Render the commandment markdown.
 
-    Two paths (mirrors legacy monolith step 7):
+    Two paths for commandment sourcing (plan §13.2-E row 26):
 
-      1. ``eval_command`` path: call
-         ``generate_commandment_from_commands(kernel_path,
-         correctness_command, performance_command, repo_root)``.
-      2. ``test_command`` path (Triton-style with a harness): call
-         ``generate_commandment(kernel_path, harness_path, repo_root,
-         kernel_language)``.
+      1. Jinja (preferred) — language.commandment_template_path.
+      2. Legacy Python (``commandment.py``).
 
-    Both write ``{output_dir}/COMMANDMENT.md`` and populate
-    ``ctx.commandment`` + ``ctx.commandment_path``.
+    Both paths feed through the universal ``validate_commandment``
+    contract before returning.
     """
 
     name = "explore"
@@ -73,9 +136,36 @@ class ExplorePhase(Phase):
         correctness_cmd = _join_cmd(ctx.correctness_command)
         perf_cmd = _join_cmd(ctx.performance_command)
 
-        commandment: str | None = None
+        # Build harness_path the same way both paths need it.
+        harness_path: str | None = None
+        if ctx.test_command:
+            try:
+                from minisweagent.run.preprocess.harness_utils import extract_harness_path
 
-        if ctx.eval_command:
+                harness_path = ctx.harness_path or extract_harness_path(ctx.test_command)
+            except Exception:
+                harness_path = ctx.harness_path
+
+        # Profile replay count — legacy default is 3.  (Future: read
+        # from language-specific config or baseline metrics.)
+        profile_replays = 3
+
+        commandment: str | None = _try_jinja_render(
+            ctx=ctx,
+            correctness_cmd=correctness_cmd,
+            perf_cmd=perf_cmd,
+            compile_cmd=None,
+            harness_path=harness_path,
+            inner_kernel=False,  # TODO: detect from kernel content; legacy does this too
+            profile_replays=profile_replays,
+        )
+
+        if commandment is not None:
+            logger.info(
+                "  COMMANDMENT.md rendered via Jinja (language=%s)",
+                getattr(ctx.language, "name", "?"),
+            )
+        elif ctx.eval_command:
             try:
                 from minisweagent.run.preprocess.commandment import (
                     generate_commandment_from_commands,
@@ -88,7 +178,7 @@ class ExplorePhase(Phase):
                     performance_command=perf_cmd or ctx.eval_command,
                     repo_root=ctx.repo_root,
                 )
-                logger.info("  COMMANDMENT.md generated (from eval command)")
+                logger.info("  COMMANDMENT.md generated (legacy, from eval command)")
             except Exception as exc:
                 logger.warning("[yellow]Commandment from command failed: %s[/yellow]", exc, exc_info=True)
 
@@ -104,11 +194,7 @@ class ExplorePhase(Phase):
                 from minisweagent.run.preprocess.discovery_types import (
                     _infer_kernel_language,
                 )
-                from minisweagent.run.preprocess.harness_utils import (
-                    extract_harness_path,
-                )
 
-                harness_path = ctx.harness_path or extract_harness_path(ctx.test_command)
                 kernel_type = (ctx.discovery or {}).get("kernel", {}).get("type", "")
                 kernel_language = _infer_kernel_language(Path(ctx.kernel_path), kernel_type)
                 commandment = generate_commandment(
@@ -117,7 +203,7 @@ class ExplorePhase(Phase):
                     repo_root=ctx.repo_root,
                     kernel_language=kernel_language,
                 )
-                logger.info("  COMMANDMENT.md generated (from harness)")
+                logger.info("  COMMANDMENT.md generated (legacy, from harness)")
             except Exception as exc:
                 logger.warning("[yellow]Commandment failed: %s[/yellow]", exc, exc_info=True)
 
@@ -127,9 +213,9 @@ class ExplorePhase(Phase):
             cm_path.write_text(commandment)
             ctx.commandment_path = str(cm_path)
 
-            # Validate the rendered commandment against the universal
-            # contract.  Permissive today; tightens to FAIL once the
-            # Jinja templates land.
+            # Universal contract validator — same call for Jinja and
+            # legacy outputs so either path must satisfy the 5-section
+            # contract enforced by kernel_languages/contract.py.
             try:
                 from minisweagent.kernel_languages.contract import (
                     validate_commandment,

@@ -158,6 +158,29 @@ class DiscoveryPhase(Phase):
         tests = disc_dict.get("tests", [])
         logger.info("  Tests found: %d", len(tests))
 
+        # Resolve KernelLanguage via the registry so downstream phases
+        # (ExplorePhase's Jinja commandment render; future
+        # HarnessBuilder template lookup) can read
+        # ``ctx.language.<path>`` without re-detecting.  Prefer the
+        # discovery-provided kernel.type hint to avoid a file-read
+        # when available; fall back to registry.detect_best otherwise.
+        try:
+            from minisweagent.kernel_languages import registry
+
+            kernel_type_hint = (disc_dict.get("kernel") or {}).get("type")
+            resolved_lang = None
+            if kernel_type_hint:
+                resolved_lang = registry.detect_best_by_name(kernel_type_hint)
+            if resolved_lang is None and ctx.kernel_path:
+                resolved_lang = registry.detect_best(Path(ctx.kernel_path))
+            if resolved_lang is not None:
+                ctx.language = resolved_lang
+                logger.info("  KernelLanguage resolved: %s", resolved_lang.name)
+        except Exception as exc:
+            # Language resolution is best-effort — falling back to
+            # None makes ExplorePhase use its legacy path.
+            logger.debug("KernelLanguage resolution failed (non-fatal): %s", exc)
+
         ctx.phases_run.append(self.name)
 
 

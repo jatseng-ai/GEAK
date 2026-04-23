@@ -98,6 +98,14 @@ class PhaseContext:
     resolved: dict | None = None
     codebase_context_path: str | None = None
     discovery: dict | None = None
+    language: Any = None
+    """Resolved ``KernelLanguage`` instance for the (possibly translated)
+    kernel.  Populated by DiscoveryPhase via
+    ``kernel_languages.registry.detect_best(Path(kernel_path))``.  Downstream
+    phases (ExplorePhase for Jinja commandment, etc.) read
+    ``ctx.language.<path_field>`` to render language-driven templates
+    without re-doing detection.  Typed as ``Any`` to avoid an import
+    cycle with the kernel_languages package."""
 
     harness_path: str = ""
     test_command: str | None = None
