@@ -70,18 +70,19 @@ class TestSubagentContract:
 
 
 class TestSubagentNotImplementedMessages:
-    """The skeleton bodies raise NotImplementedError with pointers to where
-    the full implementation will live.  Downstream callers rely on these
-    messages being actionable.
+    """The remaining skeleton bodies raise NotImplementedError with pointers
+    to where the full implementation will live.  Downstream callers rely
+    on these messages being actionable.
 
-    Note: TranslationAgent has a full implementation and is NOT listed
-    here — see ``test_translation_agent.py`` for its behavioural tests.
+    Implemented subagents (behavioural tests live elsewhere):
+      - TranslationAgent                 -> ``test_translation_agent.py``
+      - HarnessBuilder                   -> ``test_harness_builder.py``
+
+    Still skeletons (pending D2 / D3):
+      - KernelAnalysisAgent              -> planned for Workstream D2
+      - CrossSessionMemoryAnalysisAgent  -> planned for Workstream D3 (KB work
+                                             deferred per §13.4)
     """
-
-    def test_harness_builder_points_to_legacy(self) -> None:
-        with pytest.raises(NotImplementedError) as e:
-            HarnessBuilder.__dict__["run"](_FakeSubagent())
-        assert "create_validated_harness" in str(e.value)
 
     def test_kernel_analysis_points_to_commandment(self) -> None:
         with pytest.raises(NotImplementedError) as e:
