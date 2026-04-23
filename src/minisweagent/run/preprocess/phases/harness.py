@@ -45,12 +45,27 @@ class HarnessPhase(Phase):
         self._log_enter()
         if ctx.harness_path:
             logger.info("  harness_path already set by previous phase (%s) — skipping.", ctx.harness_path)
+            self._validate_if_present(ctx.harness_path)
             ctx.phases_run.append(self.name)
             return
         # Body is delegated to the legacy monolith for now.  The
         # orchestrator's fallback path handles this case.
         logger.debug("HarnessPhase: no harness_path yet; deferring to legacy fallback.")
         ctx.phases_run.append(self.name)
+
+    @staticmethod
+    def _validate_if_present(path_str: str | None) -> None:
+        """Run the universal harness contract validator when a path is available."""
+        if not path_str:
+            return
+        try:
+            from pathlib import Path as _Path
+
+            from minisweagent.kernel_languages.contract import validate_harness
+
+            validate_harness(_Path(path_str))
+        except Exception as exc:
+            logger.warning("[yellow]validate_harness: %s[/yellow]", exc)
 
 
 __all__ = ["HarnessPhase"]

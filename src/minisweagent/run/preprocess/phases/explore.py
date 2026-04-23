@@ -120,6 +120,18 @@ class ExplorePhase(Phase):
             cm_path.write_text(commandment)
             ctx.commandment_path = str(cm_path)
 
+            # Validate the rendered commandment against the universal
+            # contract.  Permissive today; tightens to FAIL once the
+            # Jinja templates land.
+            try:
+                from minisweagent.kernel_languages.contract import (
+                    validate_commandment,
+                )
+
+                validate_commandment(cm_path)
+            except Exception as exc:
+                logger.warning("[yellow]validate_commandment: %s[/yellow]", exc)
+
         ctx.phases_run.append(self.name)
 
 

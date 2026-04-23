@@ -171,7 +171,44 @@ def run_preprocessor_via_orchestrator(
             if not result.get(key):
                 result[key] = value
 
+    # Universal-contract validation on the final artefacts, regardless
+    # of whether they came from the new phases or the legacy fallback.
+    # Permissive today (logs warnings only); tightens to FAIL once the
+    # Jinja commandment templates + HarnessBuilder land.
+    _validate_contract_artifacts(result, output_dir=Path(output_dir))
+
     return result
+
+
+def _validate_contract_artifacts(result: dict[str, Any], *, output_dir: Path) -> None:
+    """Validate harness + commandment against the universal contract.
+
+    Logs warnings when an artifact is partially non-compliant.  Does
+    not raise — keeps the behaviour backwards-compatible with the
+    legacy path.  The FAIL-strict transition lands when PR-2's full
+    template migration completes.
+    """
+    try:
+        from minisweagent.kernel_languages.contract import (
+            validate_commandment,
+            validate_harness,
+        )
+    except Exception:
+        return
+
+    harness_path = result.get("harness_path")
+    if harness_path:
+        try:
+            validate_harness(Path(harness_path))
+        except Exception as exc:
+            logger.warning("[yellow]validate_harness: %s[/yellow]", exc)
+
+    cm_path = output_dir / "COMMANDMENT.md"
+    if cm_path.exists():
+        try:
+            validate_commandment(cm_path)
+        except Exception as exc:
+            logger.warning("[yellow]validate_commandment: %s[/yellow]", exc)
 
 
 __all__ = ["PreprocessOrchestrator", "run_preprocessor_via_orchestrator"]
