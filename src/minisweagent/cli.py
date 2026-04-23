@@ -169,6 +169,15 @@ def main(
     num_parallel: int | None = typer.Option(None, "--num-parallel", help="Number of parallel patch agents."),
     gpu_ids: str | None = typer.Option(None, "--gpu-ids", help="Comma-separated GPU IDs."),
     test_command: str | None = typer.Option(None, "--test_command", "--test-command", help="Test command"),
+    target_language: str | None = typer.Option(
+        None,
+        "--target-language",
+        help=(
+            "Target kernel language for translation (e.g. 'triton', 'hip'). "
+            "When set and different from the detected source language, a "
+            "translation preprocess phase runs before optimization."
+        ),
+    ),
 ):
     # fmt: on
     del visual
@@ -329,6 +338,11 @@ def main(
         if pipeline_params.get("max_rounds") is not None:
             max_rounds = pipeline_params["max_rounds"]
             logger.info("Using max rounds: %s.", max_rounds)
+
+        # target_language: CLI flag takes priority over LLM extraction
+        if target_language is None and pipeline_params.get("target_language"):
+            target_language = str(pipeline_params["target_language"]).strip().lower()
+            logger.info("Using target_language=%s from task content.", target_language)
 
         # Prompt for missing required params (kernel_url) — only if not already set
         if kernel_url is None:
@@ -509,6 +523,43 @@ def main(
         test_command = preprocess_ctx["test_command"]
     if preprocess_ctx.get("repo_root") and repo is None:
         repo = Path(preprocess_ctx["repo_root"])
+
+    # Translation-phase gate:
+    #
+    # Translation is NOT a ``run_pipeline`` mode.  When the user
+    # specified a ``target_language`` different from the detected source
+    # language, the plan calls for a conditional preprocess phase
+    # (preprocess/phases/translation.py) that runs a standalone
+    # ``TranslationAgent`` (SubagentBase subclass, NOT OptimizationAgent)
+    # with a verify-retry loop against golden tensors captured from the
+    # source harness.  The phase then swaps ``ctx.kernel_path`` +
+    # ``ctx.language`` to the translated kernel, and normal
+    # Discovery/Harness/Baseline/Explore + run_pipeline proceed.
+    #
+    # The full phase is not yet implemented (it lands with the
+    # preprocessing refactor PR).  For now we surface a clear error with
+    # actionable pointers instead of silently ignoring the flag.
+    _detected_source = _normalize_kernel_type(
+        (preprocess_ctx.get("discovery") or {}).get("kernel", {}).get("type")
+        or preprocess_ctx.get("kernel_type")
+    )
+    if target_language and target_language != _detected_source and target_language != "other":
+        raise NotImplementedError(
+            f"Translation requested (source={_detected_source!r} → target={target_language!r}) "
+            f"but the preprocess translation phase is not implemented yet.\n\n"
+            f"The architectural skeleton is in place:\n"
+            f"  - ``TranslationAgent`` (standalone SubagentBase; NOT derived from OptimizationAgent) "
+            f"lives at src/minisweagent/subagents/translation/translator.py\n"
+            f"  - The phase will live at src/minisweagent/preprocess/phases/translation.py\n\n"
+            f"Implementation is scheduled for the preprocessing refactor PR.  Until then, "
+            f"omit ``--target-language`` (or set it equal to the source) to optimize the kernel "
+            f"in-place."
+        )
+    if target_language and target_language == _detected_source:
+        logger.info(
+            "target_language=%s matches detected source language; translation phase skipped (no-op).",
+            target_language,
+        )
 
     # Mode resolution:
     #   - If the LLM / CLI did not specify a mode, default to ``auto``.
