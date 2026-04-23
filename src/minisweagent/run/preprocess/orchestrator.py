@@ -30,6 +30,7 @@ interim commit rollback-safe without creating a second runtime path.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,17 @@ class PreprocessOrchestrator:
 
             if ctx.translate_only and phase.name == TranslationPhase.name:
                 logger.info("translate_only=True: returning after TranslationPhase")
+                return ctx
+
+            # §13.2-A row 3: honour ``GEAK_HARNESS_ONLY=1`` by returning
+            # early after HarnessPhase.  Test harnesses that only need
+            # the harness generated + validated (no profiling, no
+            # baseline metrics, no commandment) use this env flag.
+            if phase.name == HarnessPhase.name and os.environ.get("GEAK_HARNESS_ONLY") == "1":
+                logger.info(
+                    "GEAK_HARNESS_ONLY=1: returning after HarnessPhase "
+                    "(skipping baseline + explore)."
+                )
                 return ctx
 
         return ctx

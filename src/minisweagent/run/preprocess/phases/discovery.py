@@ -105,10 +105,14 @@ class DiscoveryPhase(Phase):
                 clean_kernel,
             )
             ctx.kernel_path = clean_kernel
-            # HarnessPhase can optionally pick up the split harness if
-            # the caller didn't specify one.  We stash it on the context
-            # via ``_split_harness_hint`` (not a public field).
-            ctx.__dict__["_split_harness_hint"] = new_harness
+            # §13.2-A row 6: stash the split harness on a PUBLIC field
+            # so HarnessPhase can pick it up when the caller didn't
+            # supply an explicit ``--harness``.  The legacy monolith
+            # (preprocessor.py:518-523) runs the split harness through
+            # validate_harness and, if it passes static validation,
+            # treats it as an explicit harness.  That matching behaviour
+            # lives in HarnessPhase.
+            ctx.split_harness_hint = str(new_harness)
 
         # 2. Codebase context ───────────────────────────────────────────
         from minisweagent.run.preprocess.codebase_context import (

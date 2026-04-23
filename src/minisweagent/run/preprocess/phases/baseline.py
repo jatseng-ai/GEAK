@@ -177,6 +177,15 @@ class BaselinePhase(Phase):
                     output_dir=output_dir,
                     tag="correctness",
                 )
+                # §13.2-A row 1: populate ctx.correctness so downstream
+                # consumers (reports, debugging) have the same structure
+                # the legacy monolith produced.
+                ctx.correctness = {
+                    "command": correctness_cmd,
+                    "returncode": result.returncode,
+                    "stdout_path": str(output_dir / "correctness_stdout.txt"),
+                    "stderr_path": str(output_dir / "correctness_stderr.txt"),
+                }
                 if result.returncode != 0:
                     raise RuntimeError(
                         f"correctness_command failed (returncode={result.returncode}). "
@@ -216,6 +225,8 @@ class BaselinePhase(Phase):
             # test_command path: use the legacy run_baseline_profile helper
             # (reads the harness, runs it under the profiler).
             from minisweagent.run.preprocess.harness_utils import (
+                DEFAULT_EVAL_BENCHMARK_ITERATIONS,
+                execute_harness_validation,
                 extract_harness_path,
                 run_baseline_profile,
             )
@@ -223,6 +234,64 @@ class BaselinePhase(Phase):
             if not ctx.harness_path:
                 ctx.harness_path = extract_harness_path(ctx.test_command)
                 (output_dir / "harness_path.txt").write_text(ctx.harness_path)
+
+            # §13.2-A row 4: canonical harness baseline re-run.  Legacy
+            # preprocessor.py:988-1027 runs the harness in all four modes
+            # with ``--iterations DEFAULT_EVAL_BENCHMARK_ITERATIONS`` BEFORE
+            # profiling, to capture a benchmark baseline that uses the same
+            # iteration count as the orchestrator evaluation.  We preserve
+            # that behaviour here so speedups stay benchmark-vs-benchmark
+            # on a consistent contract.
+            harness_path_for_baseline = ctx.harness_path or extract_harness_path(ctx.test_command)
+            if harness_path_for_baseline and ctx.harness_results:
+                logger.info(
+                    "  Canonical baseline re-run: all modes with --iterations %d",
+                    DEFAULT_EVAL_BENCHMARK_ITERATIONS,
+                )
+                try:
+                    bl_ok, bl_errors, baseline_results = execute_harness_validation(
+                        harness_path_for_baseline,
+                        repo_root=ctx.repo_root,
+                        gpu_id=ctx.gpu_id,
+                        benchmark_extra_args=f"--iterations {DEFAULT_EVAL_BENCHMARK_ITERATIONS}",
+                    )
+                    for r in baseline_results:
+                        status = "PASS" if r["success"] else "FAIL"
+                        logger.info(
+                            "    --%s: %s (%ss)", r["mode"], status, r["duration_s"]
+                        )
+                    if not bl_ok:
+                        logger.warning("  Baseline re-run had failures: %s", bl_errors)
+                    for r in baseline_results:
+                        if r["mode"] == "benchmark" and r["success"]:
+                            benchmark_baseline = r["stdout"]
+                        if r["mode"] == "full-benchmark" and r["success"]:
+                            full_benchmark_baseline = r["stdout"]
+                except Exception as exc:
+                    logger.warning(
+                        "[yellow]Canonical baseline re-run failed: %s[/yellow]",
+                        exc,
+                        exc_info=True,
+                    )
+            elif ctx.harness_results:
+                # Fallback: use the stdout captured during HarnessPhase's
+                # execute_harness_validation call.  Matches legacy
+                # preprocessor.py:1012-1017.
+                for r in ctx.harness_results:
+                    if r.get("mode") == "benchmark" and r.get("success"):
+                        benchmark_baseline = r.get("stdout")
+                    if r.get("mode") == "full-benchmark" and r.get("success"):
+                        full_benchmark_baseline = r.get("stdout")
+
+            # Canonicalize: prefer full-benchmark stdout over plain
+            # benchmark stdout; write BOTH files for downstream consumers.
+            canonical = full_benchmark_baseline or benchmark_baseline
+            if canonical:
+                benchmark_baseline = canonical
+                full_benchmark_baseline = canonical
+                (output_dir / "benchmark_baseline.txt").write_text(canonical)
+                (output_dir / "full_benchmark_baseline.txt").write_text(canonical)
+
             try:
                 profiling = run_baseline_profile(ctx.test_command, gpu_id=ctx.gpu_id)
             except Exception as exc:

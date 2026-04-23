@@ -109,10 +109,20 @@ class PhaseContext:
     baseline_metrics: dict | None = None
     benchmark_baseline: str | None = None
     full_benchmark_baseline: str | None = None
+    correctness: dict | None = None
+    """Set by BaselinePhase on the eval_command path — mirrors the legacy
+    ``ctx["correctness"]`` dict (command / returncode / stdout_path /
+    stderr_path).  §13.2-A row 1."""
 
     commandment: str | None = None
     commandment_path: str | None = None
     kernel_analysis_md: str | None = None
+
+    split_harness_hint: str | None = None
+    """Absolute path to a harness file produced by DiscoveryPhase when
+    it detected a merged kernel file (kernel + test logic) and split
+    them.  HarnessPhase uses this as a candidate harness when
+    ``ctx.harness`` is unset.  §13.2-A row 6."""
 
     # ── Status ──────────────────────────────────────────────────────────
     phases_run: list[str] = field(default_factory=list)
@@ -140,6 +150,7 @@ class PhaseContext:
             "baseline_metrics": self.baseline_metrics,
             "benchmark_baseline": self.benchmark_baseline,
             "full_benchmark_baseline": self.full_benchmark_baseline,
+            "correctness": self.correctness,
             "commandment": self.commandment,
             "commandment_path": self.commandment_path,
             "kernel_analysis_md": self.kernel_analysis_md,

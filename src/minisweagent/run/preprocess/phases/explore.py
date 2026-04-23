@@ -91,6 +91,13 @@ class ExplorePhase(Phase):
                 logger.info("  COMMANDMENT.md generated (from eval command)")
             except Exception as exc:
                 logger.warning("[yellow]Commandment from command failed: %s[/yellow]", exc, exc_info=True)
+
+            # §13.2-A row 5: legacy preprocessor.py:1204 sets
+            # ``ctx["test_command"] = eval_command`` on the eval path so
+            # downstream consumers see a consistent test_command regardless
+            # of which path produced it.  Match that behaviour.
+            if not ctx.test_command:
+                ctx.test_command = ctx.eval_command
         elif ctx.test_command:
             try:
                 from minisweagent.run.preprocess.commandment import generate_commandment
