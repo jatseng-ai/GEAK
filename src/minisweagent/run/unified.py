@@ -236,27 +236,129 @@ def _run_planned(ctx: PipelineContext):
 
 
 def _run_fixed(ctx: PipelineContext):
-    """Dispatch into the identical-copies parallel path after composing the body."""
+    """Run fixed mode with an explicit round loop.
+
+    The round loop is the single most important structural difference
+    between the legacy fixed-mode path and the diagram's end state:
+
+      - Legacy (pre-refactor): ``run_homogeneous_agent`` runs ONCE with
+        ``num_parallel`` copies.  Fixed mode was effectively "1 round ×
+        N parallel agents".
+      - Diagram (this implementation): iterate ``max_rounds`` times;
+        each round spawns ``num_parallel`` copies that re-attempt the
+        optimization.  The best result across all rounds wins.
+
+    Between rounds, the task body is enriched with a short summary of
+    the best speedup found so far so subsequent rounds can build on
+    (or diverge from) earlier wins.  Planned mode is unchanged — its
+    planner already does explicit multi-round iteration.
+    """
     from minisweagent.agents.homogeneous.homogeneous_agent import run_homogeneous_agent
 
-    body = compose_task_body(
-        ComposeInputs(
-            user_prompt=ctx.user_prompt,
-            mode="fixed",
-            preprocess_ctx=ctx.preprocess_ctx,
-            kernel_language=ctx.kernel_language,
-            extra_addenda=ctx.extra_addenda,
-        )
-    )
+    max_rounds = max(1, int(ctx.max_rounds or 1))
+    best_result = None
+    best_speedup: float | None = None
+    last_round_result: Any = None
 
+    for round_num in range(1, max_rounds + 1):
+        logger.info(
+            "[bold cyan]%s[/bold cyan]\n  [bold]Fixed-mode round %d/%d[/bold]\n[bold cyan]%s[/bold cyan]",
+            "=" * 60,
+            round_num,
+            max_rounds,
+            "=" * 60,
+        )
+
+        # Compose the task body for this round.  On rounds > 1 we
+        # append the previous best so the LLM has a concrete target
+        # to beat — same signal the planned-mode planner gets from
+        # its ``round_N_evaluation.json`` input.
+        round_addenda = list(ctx.extra_addenda)
+        if round_num > 1 and best_speedup is not None:
+            round_addenda.append(
+                f"## Previous Rounds\n\n"
+                f"The best candidate across rounds 1..{round_num - 1} "
+                f"achieved a verified speedup of {best_speedup:.3f}x.  "
+                f"Use this as a lower bound — the current round's goal is "
+                f"to find an approach that beats it, OR to confirm the "
+                f"strategy generalises across seeds.  Explore strategies "
+                f"not already exhausted in earlier rounds."
+            )
+
+        body = compose_task_body(
+            ComposeInputs(
+                user_prompt=ctx.user_prompt,
+                mode="fixed",
+                preprocess_ctx=ctx.preprocess_ctx,
+                kernel_language=ctx.kernel_language,
+                extra_addenda=round_addenda,
+            )
+        )
+
+        round_best = _invoke_homogeneous_runner(
+            ctx=ctx,
+            body=body,
+            run_homogeneous_agent=run_homogeneous_agent,
+            round_num=round_num,
+        )
+        last_round_result = round_best
+
+        # Track the best result across all rounds.
+        round_speedup = getattr(round_best, "best_speedup", None) if round_best else None
+        if round_speedup is not None and (
+            best_speedup is None or round_speedup > best_speedup
+        ):
+            best_speedup = round_speedup
+            best_result = round_best
+
+        logger.info(
+            "Fixed-mode round %d complete (this round best: %s; overall best: %s)",
+            round_num,
+            f"{round_speedup:.3f}x" if round_speedup is not None else "—",
+            f"{best_speedup:.3f}x" if best_speedup is not None else "—",
+        )
+
+    # Prefer the best-by-speedup result across rounds.  When no round
+    # produced a measurable speedup, fall back to the last round's raw
+    # result so callers see the same shape as legacy single-round
+    # invocations (which always returned whatever ``run_homogeneous_agent``
+    # gave them, with or without a ``best_speedup`` attribute).
+    return best_result if best_result is not None else last_round_result
+
+
+def _invoke_homogeneous_runner(
+    *,
+    ctx: PipelineContext,
+    body: str,
+    run_homogeneous_agent: Callable[..., Any],
+    round_num: int,
+) -> Any:
+    """Call ``run_homogeneous_agent`` with kwargs built from ``ctx``.
+
+    Isolated so the round loop body stays readable and tests can mock
+    just the invocation without tangling with kwarg plumbing.  Takes
+    ``round_num`` so the homogeneous runner writes per-round artefacts
+    into ``<output_dir>/round_N/`` subdirs (matching planned mode's
+    convention).
+    """
     agent_config = dict(ctx.config.get("agent", {}))
     agent_config["save_patch"] = True
     if ctx.test_command is not None:
         agent_config["test_command"] = ctx.test_command
     if ctx.metric is not None:
         agent_config["metric"] = ctx.metric
+
+    round_output_dir: Path | None = None
     if ctx.output_dir is not None:
-        agent_config["patch_output_dir"] = str(ctx.output_dir)
+        # Only nest per-round when max_rounds > 1 so single-round
+        # callers still see artefacts directly under output_dir
+        # (legacy behaviour preserved).
+        max_rounds = max(1, int(ctx.max_rounds or 1))
+        round_output_dir = (
+            ctx.output_dir / f"round_{round_num}" if max_rounds > 1 else ctx.output_dir
+        )
+        round_output_dir.mkdir(parents=True, exist_ok=True)
+        agent_config["patch_output_dir"] = str(round_output_dir)
 
     kwargs: dict[str, Any] = dict(
         config=ctx.config,
@@ -274,8 +376,8 @@ def _run_fixed(ctx: PipelineContext):
         # run_homogeneous_agent takes a string and re-parses internally;
         # re-serialize the canonical list[int] form.
         kwargs["gpu_ids"] = ",".join(str(g) for g in ctx.gpu_ids)
-    if ctx.output_dir is not None:
-        kwargs["output_dir"] = ctx.output_dir
+    if round_output_dir is not None:
+        kwargs["output_dir"] = round_output_dir
     if ctx.model_name is not None:
         kwargs["model_name"] = ctx.model_name
     if ctx.console is not None:
