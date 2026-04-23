@@ -9,19 +9,22 @@ Source of truth: `docs/refactor/CODEBASE_AUDIT.md` §0.1 + §14.
 From `/data/sapmajum/triton_runs/gemm_a16w16_atomic_canonical-rocm700_memon_20260422_083415.log`:
 
 ```
-Normalized kernel_type from task content: triton            [line 34]
---- Step 1/7: Resolve kernel URL ---                        [line 76]
---- Step 2/7: Codebase Context ---                          [line 89]
---- Step 3/7: Test Discovery ---                            [line 95]
---- Step 4/7: Harness Validation ---                        [line 126]
---- Step 5/7: Kernel Profiling ---                          [line 155]
---- Step 6/7: Baseline Metrics ---                          [line 185]
---- Step 7/7: Commandment ---                               [line 192]
-Using heterogeneous mode based on discovery                 [line 197]
-run_orchestrator: ... heterogeneous=True                    [line 202]
-Cross-session memory                                         [present]
-Exploration Phase (this may take a few minutes)             [line 215]
+Normalized kernel_type from task content: triton                      [line 34]
+--- Step 1/7: Resolve kernel URL                                      [line 76]
+--- Step 2/7: Codebase context                                        [line 89]
+--- Step 3/7: Test discovery                                          [line 95]
+--- Step 4/7: Baseline                                                [line 126]
+--- Step 5/7: Kernel profiling                                        [line 155]
+--- Step 6/7: Baseline metrics                                        [line 185]
+--- Step 7/7: Commandment                                             [line 192]
+Using heterogeneous mode based on discovery.                          [line 197]
+run_orchestrator:                                                     [line 200]
+start_round=1, heterogeneous=True                                     [line 202]  (continuation)
+Cross-session memory                                                  [line 207]
+Exploration Phase (this may take a few minutes)                       [line 215]
 ```
+
+**Note on formatting**: the original audit used `--- Step N/7: Title ---` with trailing dashes and CapCase Titles. Live log inspection shows the real format is `--- Step N/7: <title>` with lowercase second word and NO trailing `---`. Step 4 is "Baseline", not "Harness Validation" (the audit was wrong; harness validation is folded into Step 4). The smoke tests use tolerant patterns that match both forms.
 
 Regex list used by `tests/smoke/test_triton_hetero_invariants.py`:
 
