@@ -904,13 +904,101 @@ def _extract_user_test_files(ctx: PhaseContext) -> list[Path]:
 
 
 def _read_codebase_context(ctx: PhaseContext) -> str:
-    """Return the codebase-context markdown, or empty string."""
-    if not ctx.codebase_context_path:
-        return ""
-    try:
-        return Path(ctx.codebase_context_path).read_text(encoding="utf-8")
-    except Exception:
-        return ""
+    """Return the codebase-context markdown PLUS auto-discovered repo files
+    that materially shape the harness contract.
+
+    HarnessBuilder is a one-shot LLM transform — it has no tools to go
+    explore the repo on its own.  But the user's test command often
+    references files that HarnessBuilder MUST inspect to produce a
+    correct universal-contract harness:
+
+      - ``scripts/task_runner.py`` — exposes the {compile, correctness,
+        performance} modes used by the AgentKernelArena HIP convention
+      - ``Makefile`` / ``CMakeLists.txt`` — build steps for HIP / CUDA
+      - ``config.yaml`` — task metadata (target_kernel_functions,
+        compile_command, correctness_command, performance_command)
+      - ``eval_tools/`` — alternative HIP eval scripts used by
+        ``hip2hip/gpumode/`` style tasks
+      - ``*_wrapper.py`` — pybind11 / torch.utils.cpp_extension wrappers
+        that expose the HIP kernel to Python
+
+    We auto-glob these files from ``ctx.repo_root`` and append them as
+    structured sections to the discovery_context blob so HarnessBuilder
+    sees the SAME files an experienced engineer would inspect when
+    writing a harness manually.
+
+    File-content size cap per file (8 KB) keeps the prompt tractable.
+    Missing files are silently skipped.
+    """
+    parts: list[str] = []
+    if ctx.codebase_context_path:
+        try:
+            parts.append(Path(ctx.codebase_context_path).read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    repo_root = Path(ctx.repo_root) if ctx.repo_root else None
+    if repo_root is None or not repo_root.is_dir():
+        return "\n\n".join(p for p in parts if p)
+
+    # Curated reconnaissance: file globs that materially shape the
+    # harness contract.  Order matters: we want the agent to see
+    # build files first, then test runners, then language wrappers.
+    _RECON_GLOBS: tuple[tuple[str, str], ...] = (
+        ("Makefile",                  "Makefile"),
+        ("CMakeLists.txt",            "CMakeLists.txt"),
+        ("Makefile.am",               "Makefile.am"),
+        ("config.yaml",               "config.yaml"),
+        ("config.yml",                "config.yml"),
+        ("scripts/task_runner.py",    "scripts/task_runner.py (test runner)"),
+        ("task_runner.py",            "task_runner.py (top-level test runner)"),
+        ("eval_tools/compile.py",     "eval_tools/compile.py"),
+        ("eval_tools/correctness_check.py", "eval_tools/correctness_check.py"),
+        ("eval_tools/cal_kernel_perf.py",   "eval_tools/cal_kernel_perf.py"),
+        ("kernel_loader.py",          "kernel_loader.py (HIP/CUDA pybind11 entry)"),
+    )
+    _PER_FILE_CAP = 8000
+
+    seen: set[str] = set()
+    for relpath, label in _RECON_GLOBS:
+        candidate = repo_root / relpath
+        if not candidate.is_file():
+            continue
+        key = str(candidate.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            content = candidate.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if len(content) > _PER_FILE_CAP:
+            content = content[:_PER_FILE_CAP] + f"\n\n# [truncated; full size {len(content)} bytes]"
+        parts.append(
+            f"\n## REPO RECON: {label}\n\n"
+            f"`{candidate}`:\n\n"
+            f"```\n{content.rstrip()}\n```"
+        )
+
+    # Wrapper files are kernel-name-derived; glob them.
+    for wrapper in sorted(repo_root.glob("*_wrapper.py")):
+        key = str(wrapper.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            content = wrapper.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if len(content) > _PER_FILE_CAP:
+            content = content[:_PER_FILE_CAP] + f"\n\n# [truncated; full size {len(content)} bytes]"
+        parts.append(
+            f"\n## REPO RECON: {wrapper.name} (Python wrapper for HIP/CUDA kernel)\n\n"
+            f"`{wrapper}`:\n\n"
+            f"```python\n{content.rstrip()}\n```"
+        )
+
+    return "\n\n".join(p for p in parts if p)
 
 
 # ──────────────────────────────────────────────────────────────────────
