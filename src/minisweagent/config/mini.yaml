@@ -153,11 +153,11 @@ env:
     TQDM_DISABLE: '1'
   timeout: 3600
 model:
-  model_class: amd_llm
-  # claude-opus-4.5, claude-sonnet-4.5, gpt-5.1, gpt-5, gpt-5-codex
-  model_name: claude-opus-4.5
-  # API key is read from AMD_LLM_API_KEY environment variable
-  # Set it in .env file or: export AMD_LLM_API_KEY=your_key_here
+  # LiteLLM path (same defaults as geak_0422 geak.yaml) — AMD OpenAI-compatible gateway
+  model_class: litellm
+  model_name: claude-opus-4-6
+  base_url: https://core42.primus-safe.amd.com/api/v1/llm-proxy/v1
+  # API key: MSWEA_MODEL_API_KEY, or AMD_LLM_API_KEY / LLM_GATEWAY_KEY (see get_model), or set below
   api_key: null
   model_kwargs:
     temperature: 0.0

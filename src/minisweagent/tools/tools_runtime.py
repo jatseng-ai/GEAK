@@ -12,8 +12,16 @@ with open(json_path, encoding="utf-8") as f:
     _all_tools = json.load(f)
 
 
-def get_tools_list() -> list:
-    return list(_all_tools)
+def get_tools_list(use_strategy_manager: bool = False) -> list:
+    """Return tool definitions for the API.
+
+    ``use_strategy_manager``: when False, exclude ``strategy_manager`` if present
+    (parity with branches that ship that tool in ``tools.json``).
+    """
+    tools = list(_all_tools)
+    if not use_strategy_manager:
+        tools = [t for t in tools if t.get("name") != "strategy_manager"]
+    return tools
 
 
 tools_list = _all_tools

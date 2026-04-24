@@ -126,9 +126,16 @@ def main(
     _model_name = getattr(model.config, 'model_name', 'unknown')
     _api_key = getattr(model.config, 'api_key', None)
     if not _api_key:
-        # Try to get the actual API key used (for amd_llm model)
+        # Resolve key from env (amd_llm vs litellm / gateway)
         import os as _os
-        _api_key = _os.getenv("AMD_LLM_API_KEY") or _os.getenv("LLM_GATEWAY_KEY") or _os.getenv("ANTHROPIC_API_KEY")
+
+        _api_key = (
+            _os.getenv("MSWEA_MODEL_API_KEY")
+            or _os.getenv("AMD_LLM_API_KEY")
+            or _os.getenv("LLM_GATEWAY_KEY")
+            or _os.getenv("ANTHROPIC_API_KEY")
+        )
+        
     _api_key_display = f"{_api_key[:8]}..." if _api_key and len(_api_key) > 8 else _api_key or "Not set"
     if not quiet:
         console.print(f"\\[mini-swe-agent] Using model: [bold cyan]{_model_name}[/bold cyan], API key: [bold cyan]{_api_key_display}[/bold cyan]")

@@ -17,7 +17,7 @@ def test_authentication_error_enhanced_message():
     original_error = Mock(spec=litellm.exceptions.AuthenticationError)
     original_error.message = "Invalid API key"
 
-    with patch("litellm.completion") as mock_completion:
+    with patch("minisweagent.models.litellm_model.litellm.completion") as mock_completion:
         # Make completion raise the mock error
         def side_effect(*args, **kwargs):
             raise litellm.exceptions.AuthenticationError("Invalid API key", llm_provider="openai", model="gpt-4")
@@ -28,7 +28,7 @@ def test_authentication_error_enhanced_message():
             model._query([{"role": "user", "content": "test"}])
 
         # Check that the error message was enhanced
-        assert "You can permanently set your API key with `mini-extra config set KEY VALUE`." in str(exc_info.value)
+        assert "You can permanently set your API key with `config set KEY VALUE`." in str(exc_info.value)
 
 
 def test_model_registry_loading():
@@ -48,7 +48,7 @@ def test_model_registry_loading():
         registry_path = f.name
 
     try:
-        with patch("litellm.utils.register_model") as mock_register:
+        with patch("minisweagent.models.litellm_model.litellm.utils.register_model") as mock_register:
             _model = LitellmModel(model_name="my-custom-model", litellm_model_registry=Path(registry_path))
 
             # Verify register_model was called with the correct data
@@ -62,7 +62,7 @@ def test_model_registry_loading():
 
 def test_model_registry_none():
     """Test that no registry loading occurs when litellm_model_registry is None."""
-    with patch("litellm.register_model") as mock_register:
+    with patch("minisweagent.models.litellm_model.litellm.utils.register_model") as mock_register:
         _model = LitellmModel(model_name="gpt-4", litellm_model_registry=None)
 
         # Verify register_model was not called
@@ -71,7 +71,7 @@ def test_model_registry_none():
 
 def test_model_registry_not_provided():
     """Test that no registry loading occurs when litellm_model_registry is not provided."""
-    with patch("litellm.register_model") as mock_register:
+    with patch("minisweagent.models.litellm_model.litellm.utils.register_model") as mock_register:
         _model = LitellmModel(model_name="gpt-4o")
 
         # Verify register_model was not called

@@ -52,8 +52,20 @@ def get_model(input_model_name: str | None = None, config: dict | None = None) -
 
     model_class = get_model_class(resolved_model_name, config.pop("model_class", ""))
 
-    if (from_env := os.getenv("MSWEA_MODEL_API_KEY")) and not str(type(model_class)).endswith("DeterministicModel"):
-        config.setdefault("model_kwargs", {})["api_key"] = from_env
+    # ``type(model_class)`` is always ``type`` for normal classes; match the class itself.
+    if getattr(model_class, "__name__", "") != "DeterministicModel":
+        mk = config.setdefault("model_kwargs", {})
+        if from_env := os.getenv("MSWEA_MODEL_API_KEY"):
+            mk["api_key"] = from_env
+        else:
+            # Parity with AmdLlmModel (`AMD_LLM_API_KEY` / `LLM_GATEWAY_KEY`) and `mini.py` display
+            # logic: `mini.yaml` often leaves `api_key` null while `geak.yaml` embeds the key.
+            existing = mk.get("api_key") or config.get("api_key")
+            if existing is None or (isinstance(existing, str) and not existing.strip()):
+                for var in ("AMD_LLM_API_KEY", "LLM_GATEWAY_KEY", "ANTHROPIC_API_KEY"):
+                    if v := os.getenv(var):
+                        mk["api_key"] = v
+                        break
 
     if (
         any(s in resolved_model_name.lower() for s in ["anthropic", "sonnet", "opus", "claude"])

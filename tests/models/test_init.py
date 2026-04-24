@@ -126,6 +126,24 @@ class TestGetModel:
             # LitellmModel stores the api_key in model_kwargs
             assert model.config.model_kwargs["api_key"] == "env-key"
 
+    def test_amd_llm_api_key_used_when_no_mswa(self):
+        """AMD gateway: AMD_LLM_API_KEY populates litellm when MSWEA_MODEL_API_KEY is unset."""
+        # Empty MSWEA is falsy, so get_model falls through to AMD_LLM_API_KEY (same as unset).
+        with patch.dict(os.environ, {"AMD_LLM_API_KEY": "amd-key", "MSWEA_MODEL_API_KEY": ""}):
+            config = {"model_class": "litellm"}
+            model = get_model("test-model", config)
+            assert model.config.model_kwargs["api_key"] == "amd-key"
+
+    def test_mswa_model_api_key_over_amd_llm(self):
+        """MSWEA_MODEL_API_KEY still wins over AMD_LLM_API_KEY."""
+        with patch.dict(
+            os.environ,
+            {"MSWEA_MODEL_API_KEY": "mswa", "AMD_LLM_API_KEY": "amd"},
+        ):
+            config = {"model_class": "litellm"}
+            model = get_model("test-model", config)
+            assert model.config.model_kwargs["api_key"] == "mswa"
+
     def test_no_api_key_when_none_provided(self):
         """Test that no api_key is set when neither env var nor config provide one."""
         with patch.dict(os.environ, {}, clear=True):
