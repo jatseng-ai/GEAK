@@ -75,19 +75,52 @@ class Question:
 
 
 @dataclass
+class EvidenceCite:
+    """A single cited source backing an answer claim.
+
+    Replaces the old free-form ``evidence: list[str]`` so that downstream
+    consumers (task generator, RAG-write step, future de-dup) can reason about
+    where each claim actually came from.
+    """
+
+    source_type: str  # "kb" | "web_search" | "web_arxiv" | "web_github" | "web_rocm_docs" | "web_hn" | "facts" | "prior_run"
+    title: str = ""
+    url: str = ""  # populated for web_* origins; empty for KB chunks
+    chunk_id: str = ""  # populated for KB chunks; empty for web_* origins
+    snippet: str = ""  # short excerpt (<= ~400 chars)
+    score: float = 0.0  # retriever / search score (origin-dependent scale)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class Answer:
     """Structured per-question synthesis (Stage 4 / Stage 6 output)."""
 
     question: str
     answer: str
-    evidence: list[str] = field(default_factory=list)
+    # Structured citations replacing the old free-form list[str]. Old runs
+    # produced strings like "kb://Section (score=0.5)" -- new runs produce
+    # EvidenceCite objects with source_type, url/chunk_id, snippet, score.
+    evidence: list[EvidenceCite] = field(default_factory=list)
     affected: list[str] = field(default_factory=list)
     taskgen_implications: str = ""
     status: AnswerStatus = "open"
-    source_stage: str = "first_pass"  # "first_pass" | "second_pass"
+    source_stage: str = "first_pass"  # "first_pass" | "second_pass" | "second_pass_round_N"
+    refinement_history: list[str] = field(default_factory=list)  # query refinement chain
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "question": self.question,
+            "answer": self.answer,
+            "evidence": [e.to_dict() for e in self.evidence],
+            "affected": self.affected,
+            "taskgen_implications": self.taskgen_implications,
+            "status": self.status,
+            "source_stage": self.source_stage,
+            "refinement_history": self.refinement_history,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +135,7 @@ class BlindSpot:
     description: str
     why_it_matters: str = ""
     follow_up_question: str = ""
+    round: int = 1  # which blindspot round produced this (1, 2, 3, ...)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

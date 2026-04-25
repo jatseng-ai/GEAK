@@ -154,17 +154,27 @@ PER_QUESTION_SYNTH_PROMPT = (
         ## Task
         Answer the research question below using ONLY the provided evidence:
           - the extracted facts
-          - the retrieved knowledge-base chunks
+          - the retrieved knowledge-base chunks (origin "kb")
+          - the fetched web sources (origin "web_arxiv", "web_github",
+            "web_rocm_docs", "web_hn") -- these have a real `url` you must cite
           - the prior-run context (if any)
 
         Do not introduce facts that are not supported by the evidence. If the
-        evidence is insufficient, say so and set status to "open".
+        evidence is insufficient (fewer than {min_sources} distinct sources
+        meaningfully back your claims), say so and set status to "open".
+
+        ## Citation requirements (load-bearing)
+        Cite at least {min_sources} DISTINCT sources in `evidence` if the
+        retrieved material allows it. Each entry must point at a real chunk or
+        URL from the inputs below; do NOT invent URLs or chunk titles. Prefer
+        a mix of `kb` chunks AND `web_*` sources if both are available --
+        single-origin answers are weaker than mixed ones.
 
         Pick a recommended status that the task generator can act on:
-          - "prefer":       strong evidence; prioritize tasks in this direction
-          - "deprioritize": weak or contraindicated; deprioritize tasks here
+          - "prefer":       strong evidence (>= {min_sources} distinct sources agree); prioritize tasks here
+          - "deprioritize": weak or contraindicated by evidence
           - "reject":       evidence shows this should NOT be tried again
-          - "open":         evidence inconclusive; needs more investigation
+          - "open":         evidence inconclusive or fewer than {min_sources} sources available
 
         ## Question
         {question}
@@ -174,7 +184,7 @@ PER_QUESTION_SYNTH_PROMPT = (
         {facts_json}
         ```
 
-        ## Retrieved knowledge-base chunks
+        ## Retrieved knowledge-base + web chunks
         {kb_chunks}
 
         ## Prior-run context (may be empty)
@@ -182,11 +192,68 @@ PER_QUESTION_SYNTH_PROMPT = (
 
         ## Required JSON schema
         {{
-          "answer": "<the synthesized answer>",
-          "evidence": ["<short citation strings, e.g. 'kb://...' or 'profile.json:hot_kernels[0]'>"],
+          "answer": "<the synthesized answer; weave citations inline like [1] [2] referring to the chunks above>",
+          "evidence": [
+            {{
+              "source_type": "<kb|web_arxiv|web_github|web_rocm_docs|web_hn|facts|prior_run>",
+              "title": "<short title or section name; copy from the chunk header>",
+              "url": "<empty for kb / facts; the real URL for web_* sources>",
+              "chunk_id": "<empty for web; the chunk id or title for kb sources>",
+              "snippet": "<<= 400 chars excerpted from the chunk>",
+              "score": 0.0
+            }}
+          ],
           "affected": ["<files or functions this answer points at>"],
           "taskgen_implications": "<one-line guidance for task generation>",
           "status": "<prefer|deprioritize|reject|open>"
+        }}
+        """
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Query refinement (used by iterative_search.py when first try is weak)
+# ---------------------------------------------------------------------------
+
+QUERY_REFINEMENT_PROMPT = (
+    _HEADER
+    + textwrap.dedent(
+        """\
+
+        ## Task
+        A previous web/KB search returned weak or off-topic results for the
+        question below. Rewrite the search query so Google + arxiv + GitHub +
+        AMD ROCm docs return more on-target hits.
+
+        ## Hard constraints on the rewrite
+        - Output SHORT: 3-7 keywords total. Long queries return ZERO hits on
+          AMD's web_search tool. Drop everything that is not a noun, code
+          identifier, or a critical disambiguator.
+        - NO sentences. NO question marks. NO "what is", "how does", etc.
+        - Keep code identifiers verbatim (e.g. ``knn_kernel``, ``__shfl_xor``).
+        - Keep proper nouns (AMD, ROCm, CDNA, HIP, MI300X) when relevant.
+        - Keep dimension constants when relevant (warp, wavefront 64, k=8).
+
+        Pick ONE strategy:
+          - swap a vague term for a specific one (e.g. "kernel" -> "knn_kernel")
+          - shift to a sibling formulation (cause-and-effect -> the named pattern)
+          - drop the qualifier and search for the bare concept
+          - target a specific source family (e.g. "arxiv knn gpu" or
+            "github rocm point cloud knn")
+
+        ## Original question
+        {question}
+
+        ## Queries already tried
+        {tried_queries}
+
+        ## Sample of weak results (titles only)
+        {weak_titles}
+
+        ## Required JSON schema
+        {{
+          "refined_query": "<3-7 keywords, no quotes, no question mark>"
         }}
         """
     )
@@ -203,28 +270,40 @@ BLINDSPOT_PROMPT = (
         """\
 
         ## Task
-        You are running a skeptical pass over the first-pass answers below.
-        Your job is to find weaknesses in the current thesis, NOT to agree.
+        You are running a skeptical pass (round {round_idx} of up to
+        {max_rounds}) over the per-question answers gathered so far. Your job
+        is to find weaknesses in the current thesis, NOT to agree.
 
         Look for:
-          - assumptions that are weakly supported
+          - assumptions that are weakly supported by the cited sources
           - strategy families that are underexplored
           - over-commitment to the bottleneck label
           - over-weighting of wrapper / layout changes
           - important files or dependencies that are missing
           - recommendations that conflict with each other
+          - claims with fewer than 4 distinct cited sources (`status: open`
+            answers are prime targets)
 
-        Each blindspot must include a follow-up question that, if answered with
-        the existing evidence sources, would resolve the doubt.
+        Each blindspot must include a follow-up question that, if researched
+        against fresh sources, would resolve the doubt.
 
-        Return AT MOST {max_blindspots} blindspots, ranked by importance.
+        ## Avoid repeating prior blindspots
+        The blindspots below were already raised in earlier rounds. Do NOT
+        emit blindspots that are semantically duplicates of these. If you have
+        nothing genuinely new and important to raise, return an empty list.
+
+        ```json
+        {prior_blindspots_json}
+        ```
+
+        Return AT MOST {max_blindspots} NEW blindspots, ranked by importance.
 
         ## Facts
         ```json
         {facts_json}
         ```
 
-        ## First-pass answers
+        ## All answers so far (first pass + any prior rounds)
         ```json
         {answers_json}
         ```

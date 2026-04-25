@@ -1276,7 +1276,31 @@ def run_preprocessor(
                     dra_model._impl.tools = []
                 dra_paths = run_dra(dra_inputs, config=dra_cfg, model=dra_model)
                 ctx["dra_artifacts"] = {k: str(v) for k, v in dra_paths.items()}
-                logger.info("  DRA wrote %d artifact(s) to %s", len(dra_paths), output_dir)
+                # Surface the per-run telemetry the runner appended to
+                # deep_search_synth_records.jsonl so a glance at the preprocess
+                # log tells you what budget the DRA actually consumed.
+                _dra_summary = ""
+                _synth_records = output_dir / "deep_search_synth_records.jsonl"
+                if _synth_records.exists():
+                    try:
+                        last = _synth_records.read_text(encoding="utf-8").strip().splitlines()[-1]
+                        _meta = json.loads(last) if last else {}
+                        if _meta.get("kind") == "run_summary":
+                            _s = _meta.get("stats") or {}
+                            _b = _meta.get("budget") or {}
+                            _dra_summary = (
+                                f" [questions={_s.get('questions', '?')} "
+                                f"blindspot_rounds={_s.get('blindspot_rounds', '?')} "
+                                f"answers={_s.get('answers_total', '?')} "
+                                f"web_fetches={_s.get('web_fetches_total', '?')} "
+                                f"refinements={_s.get('refinements_total', '?')} "
+                                f"llm_calls={_b.get('llm_calls', '?')} "
+                                f"total={_b.get('total', '?')}/{_b.get('max_total', '?')} "
+                                f"aborted={_s.get('aborted_on_budget', False)}]"
+                            )
+                    except Exception as _meta_exc:
+                        logger.debug("  Failed to read DRA synth records meta: %s", _meta_exc)
+                logger.info("  DRA wrote %d artifact(s) to %s%s", len(dra_paths), output_dir, _dra_summary)
                 if repo_root:
                     for src in dra_paths.values():
                         try:
